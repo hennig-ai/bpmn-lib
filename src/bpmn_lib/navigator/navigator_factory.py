@@ -9,6 +9,7 @@ Factory-Funktion die die komplette Aufbau-Kette kapselt:
 5. Navigator erstellen
 """
 
+from typing import Optional
 from pathlib import Path
 from basic_framework.proc_frame import log_msg, log_and_raise
 from basic_framework import MarkdownDocument
@@ -22,7 +23,7 @@ def create_navigator(
     schema_file: str,
     data_file: str,
     hierarchy_file: str,
-    log_dir: str,
+    log_dir: Optional[str] = None,
 ) -> BPMNHierarchyNavigator:
     """
     Factory-Funktion: Erstellt BPMNHierarchyNavigator aus drei Markdown-Dateien.
@@ -31,7 +32,7 @@ def create_navigator(
         schema_file: Pfad zur Schema-Definition (Tabellen, Spalten, Constraints)
         data_file: Pfad zu den Daten (BPMN-Elemente)
         hierarchy_file: Pfad zur Vererbungshierarchie (parent-child)
-        log_dir: Verzeichnis für Validation-Reports bei Fehlern
+        log_dir: Optionales Verzeichnis für Validation-Reports bei Fehlern
 
     Returns:
         BPMNHierarchyNavigator für Navigation durch die Prozessbeschreibung
@@ -84,10 +85,14 @@ def create_navigator(
 
     # 6. Prüfen auf Fehler nach Constraint-Validierung
     if val_result.has_errors():
-        filepath = val_result.write_to_file(log_dir, "validation_constraints")
+        if log_dir is not None:
+            filepath = val_result.write_to_file(log_dir, "validation_constraints")
+            log_and_raise(
+                f"Constraint-Validierung fehlgeschlagen: {val_result.count()} Fehler. "
+                f"Details siehe: {filepath}"
+            )
         log_and_raise(
-            f"Constraint-Validierung fehlgeschlagen: {val_result.count()} Fehler. "
-            f"Details siehe: {filepath}"
+            f"Constraint-Validierung fehlgeschlagen: {val_result.count()} Fehler."
         )
 
     # 7. Indizes erstellen
@@ -104,10 +109,14 @@ def create_navigator(
 
     # 10. Finale Fehlerprüfung (Navigator-Validierung)
     if val_result.has_errors():
-        filepath = val_result.write_to_file(log_dir, "validation_navigator")
+        if log_dir is not None:
+            filepath = val_result.write_to_file(log_dir, "validation_navigator")
+            log_and_raise(
+                f"Navigator-Validierung fehlgeschlagen: {val_result.count()} Fehler. "
+                f"Details siehe: {filepath}"
+            )
         log_and_raise(
-            f"Navigator-Validierung fehlgeschlagen: {val_result.count()} Fehler. "
-            f"Details siehe: {filepath}"
+            f"Navigator-Validierung fehlgeschlagen: {val_result.count()} Fehler."
         )
 
     log_msg("Navigator-Factory: Aufbau erfolgreich abgeschlossen.")
