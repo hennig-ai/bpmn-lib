@@ -2,8 +2,7 @@
 DatabaseInstance - Eine konkrete Instanz des Schemas mit Daten (Read-Only nach Erstellung).
 """
 
-import os
-from typing import Dict, List, Any, Union, Collection, Optional
+from typing import Dict, List, Any, Union, Optional, cast
 from basic_framework.proc_frame import log_msg, log_and_raise
 from basic_framework.container_utils.container_in_memory import ContainerInMemory
 from basic_framework.container_utils.container_unique_indexed import ContainerUniqueIndexed
@@ -12,7 +11,6 @@ from basic_framework.container_utils.abstract_iterator import AbstractIterator
 from basic_framework.container_utils.knot_object import KnotObject
 from bpmn_lib.database.schema.database_schema import DatabaseSchema
 from bpmn_lib.database.schema.table_definition import TableDefinition
-from bpmn_lib.database.schema.foreign_key_relationship import ForeignKeyRelationship
 
 
 class DatabaseInstance:
@@ -62,7 +60,7 @@ class DatabaseInstance:
             # Zum Dictionary hinzufuegen
             self._tables[str(v_table_name)] = o_container
 
-            log_msg(f"Leerer Container fuer Tabelle '{v_table_name}' erstellt.")
+            #log_msg(f"Leerer Container fuer Tabelle '{v_table_name}' erstellt.")
 
     def get_table(self, s_table_name: str) -> ContainerInMemory:
         """Gibt einen ContainerInMemory fuer eine Tabelle zurueck."""
@@ -78,9 +76,7 @@ class DatabaseInstance:
             log_and_raise("insert_row: Datenbank ist im Read-Only Modus.")
 
         # Container holen
-        o_container = self.get_table(s_table_name)
-        if o_container is None:
-            return False
+        o_container: ContainerInMemory = self.get_table(s_table_name)
 
         # Neue Zeile hinzufuegen
         l_new_row = o_container.add_empty_row()
@@ -103,9 +99,7 @@ class DatabaseInstance:
     def insert_row_from_iterator(self, s_table_name: str, o_source_iterator: AbstractIterator) -> bool:
         """Fuegt eine Zeile direkt ueber Iterator ein (fuer Bulk-Load)."""
         # Container holen
-        o_container = self.get_table(s_table_name)
-        if o_container is None:
-            return False
+        o_container: ContainerInMemory = self.get_table(s_table_name)
 
         # Neue Zeile hinzufuegen
         l_new_row = o_container.add_empty_row()
@@ -228,8 +222,9 @@ class DatabaseInstance:
         o_pk_index = self._primary_key_indexes[s_table_name]
 
         # Key-Dictionary erstellen
+        o_key_dict: Dict[str, Any]
         if isinstance(v_key_values, dict):
-            o_key_dict = v_key_values
+            o_key_dict = cast(Dict[str, Any], v_key_values)
         else:
             # Einzelner Wert - nehme erste PK-Spalte
             o_table_def = self._schema.get_table_definition(s_table_name)
@@ -277,7 +272,7 @@ class DatabaseInstance:
             return []
 
         # Iterator-Collection erstellen
-        o_iterators = []
+        o_iterators: List[AbstractIterator] = []
         o_container = self._tables[s_table_name]
 
         for v_row in o_rows:
@@ -328,8 +323,9 @@ class DatabaseInstance:
         o_pk_index = self._primary_key_indexes[s_table_name]
 
         # Key-Dictionary erstellen
+        o_key_dict: Dict[str, Any]
         if isinstance(v_key_values, dict):
-            o_key_dict = v_key_values
+            o_key_dict = cast(Dict[str, Any], v_key_values)
         else:
             # Einzelner Wert - nehme erste PK-Spalte
             o_table_def = self._schema.get_table_definition(s_table_name)
@@ -404,15 +400,11 @@ class DatabaseInstance:
             log_and_raise(f"get_col_value_by_pk: fuer die Tabelle {s_table_name} gibt es in der Hierarchie keinen Vater, das Attribut '{s_column_name}' kann nicht abgerufen werden")
             return None
 
-        # Ansonsten hole ich den Vater
-        o_node = o_h_table[s_table_name]
-        o_node = o_node.get_parent()
-        if o_node is None:
-            # Gibt es fuer die Tabelle in der Hierarchie keine Vatertabelle dann kann auch die Spalte nicht abgerufen werden
-            log_and_raise(f"get_col_value_by_pk: Root erreicht. Fuer die Tabelle {s_table_name} gibt es in der Hierarchie keinen Vater, das Attribut '{s_column_name}' kann nicht abgerufen werden")
-            return None
+        # Ansonsten hole ich den Vater (get_parent() raises wenn kein Parent existiert)
+        o_node: KnotObject = o_h_table[s_table_name]
+        o_parent: KnotObject = o_node.get_parent()
 
-        return self.get_col_value_by_pk(o_node.m_v_value, v_key_values, s_column_name)
+        return self.get_col_value_by_pk(o_parent.m_vValue, v_key_values, s_column_name)
 
     def get_hierarchy_data(self) -> Dict[str, KnotObject]:
         """Placeholder fuer Hierarchie-Daten - noch nicht implementiert."""

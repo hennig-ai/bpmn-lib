@@ -106,6 +106,12 @@ class DatabaseSchemaParser:
 
         return oResult
 
+    def _get_schema(self) -> DatabaseSchema:
+        """Gibt das Schema zurück. Wirft Fehler wenn Schema nicht initialisiert."""
+        if self.m_Schema is None:
+            log_and_raise(ValueError("Schema not initialized - call parse_documents() first"))
+        return self.m_Schema
+
     def parse_all_tables(self) -> None:
         """Parst alle Tabellen."""
         for vTableName in self.m_TableDict.keys():
@@ -126,7 +132,7 @@ class DatabaseSchemaParser:
         self.parse_columns(oTableDef, oContainer)
 
         # Zum Schema hinzufügen
-        self.m_Schema.add_table_definition(oTableDef)
+        self._get_schema().add_table_definition(oTableDef)
 
     def extract_description(self, oContainer: ContainerInMemory) -> str:
         """Extrahiert die Beschreibung aus der ersten Datenzeile."""
@@ -224,7 +230,7 @@ class DatabaseSchemaParser:
         oContainer = self.m_TableDict[sTableName]
 
         # TableDefinition holen
-        oTableDef = self.m_Schema.get_table_definition(sTableName)
+        oTableDef = self._get_schema().get_table_definition(sTableName)
 
         # Durch alle Spalten iterieren
         oIterator = oContainer.create_iterator()
@@ -258,7 +264,7 @@ class DatabaseSchemaParser:
             oTableDef.add_foreign_key(oFKRel)
 
             # Zum Schema hinzufügen
-            self.m_Schema.add_relationship(oFKRel)
+            self._get_schema().add_relationship(oFKRel)
 
             # log_msg(f"FK-Beziehung gefunden: {oFKRel.get_description()}")
         else:
@@ -358,10 +364,11 @@ class DatabaseSchemaParser:
             sColumnSpec = vKey
 
             # Versuche Tabelle und Spalte zu finden
-            oTableNames = self.m_Schema.get_table_names()
+            o_schema = self._get_schema()
+            oTableNames = o_schema.get_table_names()
 
             for vTableName in oTableNames:
-                oTableDef = self.m_Schema.get_table_definition(vTableName)
+                oTableDef = o_schema.get_table_definition(vTableName)
 
                 # Prüfe ob Spalte in dieser Tabelle existiert
                 if oTableDef.has_column(sColumnSpec):

@@ -120,6 +120,9 @@ class DatabaseBulkValidator:
             for v_col_name in o_table_def.get_column_names():
                 o_col_def = o_table_def.get_column(str(v_col_name))
 
+                if o_col_def is None:
+                    log_and_raise(ValueError(f"Column '{v_col_name}' not found in table '{s_table_name}'"))
+
                 if not o_col_def.is_nullable():
                     o_not_null_columns.append(str(v_col_name))
 
@@ -301,6 +304,9 @@ class DatabaseBulkValidator:
                         if v_value is not None and str(v_value) != "":
                             # Erlaubte Werte holen
                             o_allowed_values = o_table_def.get_value_domain(str(v_col))
+
+                            if o_allowed_values is None:
+                                log_and_raise(ValueError(f"Value domain for column '{v_col}' in table '{s_table_name}' not found"))
 
                             # Pruefen ob Wert erlaubt ist
                             if not self._is_value_in_collection(str(v_value), o_allowed_values):

@@ -69,7 +69,7 @@ class ValidationResult:
         Delegates to hook if present, otherwise just logs.
         """
         if self.count() == 0:
-            log_msg("Soweit keine Fehler in der Validierung gefunden", self)
+            # log_msg("Soweit keine Fehler in der Validierung gefunden", self)
             return
 
         # Report found via hook if present

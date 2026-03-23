@@ -36,10 +36,11 @@ Repository = "https://github.com/hennig-ai/bpmn-lib"
 Issues = "https://github.com/hennig-ai/bpmn-lib"
 
 [project.optional-dependencies]
-test = [
+dev = [
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
     "pytest-xdist>=3.5.0",
+    "mypy>=1.0.0",
 ]
 
 [tool.setuptools.packages.find]

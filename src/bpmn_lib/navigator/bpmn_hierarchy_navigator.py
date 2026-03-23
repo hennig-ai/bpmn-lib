@@ -78,7 +78,7 @@ class BPMNHierarchyNavigator:
     def _build_hierarchy_structure(self) -> None:
         """Baut die Hierarchie-Struktur aus dem Schema auf."""
         # 7. NEU: element_type Spezifität Validierung
-        log_msg("7. Validiere element_type Spezifität...")
+        # log_msg("7. Validiere element_type Spezifität...")
         o_report: List[str] = []
         self._validate_element_type_specificity(o_report)
         self.m_val_result.check_validation()
@@ -123,7 +123,7 @@ class BPMNHierarchyNavigator:
                 # Diese Tabelle ist nie ein Child, also eine Wurzel
                 if self.m_root_table == "":
                     self.m_root_table = v_table
-                    log_msg(f"Wurzel-Tabelle gefunden: {self.m_root_table}")
+                    # log_msg(f"Wurzel-Tabelle gefunden: {self.m_root_table}")
                 else:
                     log_msg(f"Warnung: Mehrere Wurzel-Tabellen gefunden: {v_table}")
 
@@ -137,8 +137,8 @@ class BPMNHierarchyNavigator:
         # Hierarchie-Ebenen berechnen
         self._calculate_table_levels()
 
-        log_msg(f"Hierarchie-Struktur aufgebaut: {len(self.m_parent_to_children)} Parent-Knoten, "
-                f"{len(self.m_leaf_tables)} Blatt-Tabellen, Wurzel: {self.m_root_table}")
+        # log_msg(f"Hierarchie-Struktur aufgebaut: {len(self.m_parent_to_children)} Parent-Knoten, "
+        #         f"{len(self.m_leaf_tables)} Blatt-Tabellen, Wurzel: {self.m_root_table}")
 
     def _identify_leaf_tables(self):
         """Identifiziert Tabellen ohne Kinder."""
@@ -240,7 +240,7 @@ class BPMNHierarchyNavigator:
     def _build_element_mapping(self) -> bool:
         """Baut das komplette Element-Mapping auf."""
         try:
-            log_msg("Starte Aufbau des Element-Mappings...")
+            # log_msg("Starte Aufbau des Element-Mappings...")
 
             # Zuerst alle Elemente aus bpmn_element direkt verarbeiten
             self._process_root_table()
@@ -253,7 +253,7 @@ class BPMNHierarchyNavigator:
             # Process-Element Mapping aufbauen
             self._build_process_element_mapping()
 
-            log_msg(f"Element-Mapping abgeschlossen: {len(self.m_element_mapping)} Elemente gefunden")
+            # log_msg(f"Element-Mapping abgeschlossen: {len(self.m_element_mapping)} Elemente gefunden")
             return True
         except Exception as e:
             log_and_raise(ValueError(f"Fehler beim Aufbau des Element-Mappings: {e}"))
@@ -282,7 +282,7 @@ class BPMNHierarchyNavigator:
             o_iterator.pp()
 
         if n_processed > 0:
-            log_msg(f"Tabelle '{s_table_name}' verarbeitet: {n_processed} Einträge")
+            pass  # log_msg(f"Tabelle '{s_table_name}' verarbeitet: {n_processed} Einträge")
 
     def _process_root_table(self) -> None:
         """Verarbeitet die Root-Tabelle (bpmn_element) direkt."""
@@ -320,7 +320,7 @@ class BPMNHierarchyNavigator:
 
             o_iterator.pp()
 
-        log_msg(f"Root-Tabelle verarbeitet: {len(self.m_element_mapping)} Basis-Elemente gefunden")
+        # log_msg(f"Root-Tabelle verarbeitet: {len(self.m_element_mapping)} Basis-Elemente gefunden")
 
     def _process_element_chain(self, s_start_table: str, v_start_pk: Any, s_specific_type: str) -> None:
         """Verarbeitet die komplette Hierarchie-Kette eines Elements."""
@@ -423,7 +423,7 @@ class BPMNHierarchyNavigator:
 
             o_iterator.pp()
 
-        log_msg(f"Process-Element Mapping aufgebaut: {len(self.m_process_elements)} Prozesse")
+        # log_msg(f"Process-Element Mapping aufgebaut: {len(self.m_process_elements)} Prozesse")
 
     def _get_primary_key_column(self, s_table_name: str) -> str:
         """Bestimmt die Primary Key Spalte für eine Tabelle."""
@@ -977,7 +977,7 @@ class BPMNHierarchyNavigator:
 
     def _validate_element_type_specificity(self, o_report: List[str]):
         """Validiert dass element_type immer den spezifischsten Typ in der Hierarchie enthält."""
-        log_msg("Starte Validierung der element_type Spezifität...")
+        # log_msg("Starte Validierung der element_type Spezifität...")
 
         # Hole bpmn_element Tabelle
         o_bpmn_element_table = self.get_table("bpmn_element")
