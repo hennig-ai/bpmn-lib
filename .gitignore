@@ -1,0 +1,9 @@
+nulltxt.txt
+venv/
+.claude/
+.vscode/
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+docs/internal/
