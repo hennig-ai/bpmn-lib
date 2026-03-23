@@ -21,7 +21,7 @@ class ColumnDefinition:
         self.m_is_unique = False
         self.m_is_auto_increment = False
         self.m_default_value = None
-        self.m_value_domain = None
+        self.m_value_domain: Optional[List[Any]] = None
 
         # Laenge aus Datentyp extrahieren (z.B. VARCHAR(50))
         self._extract_length_from_data_type()

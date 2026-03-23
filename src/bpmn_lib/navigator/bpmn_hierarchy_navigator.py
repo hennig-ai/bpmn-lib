@@ -364,7 +364,7 @@ class BPMNHierarchyNavigator:
             v_parent_pk = o_current_iterator.value(s_fk_column)
 
             # Parent-Mapping hinzufügen
-            o_mapping: Dict[str, Any] = {
+            o_mapping = {
                 "table": s_parent_table,
                 "pk": v_parent_pk
             }

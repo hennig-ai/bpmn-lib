@@ -2,7 +2,7 @@
 DatabaseSchema - Zentrale Verwaltung des gesamten Datenbankschemas.
 """
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from basic_framework.proc_frame import log_msg, log_and_raise
 from bpmn_lib.utils.validation_result import ValidationResult
 from bpmn_lib.database.schema.table_definition import TableDefinition
@@ -16,8 +16,8 @@ class DatabaseSchema:
     def __init__(self, oValResult: ValidationResult, sSchemaName: str) -> None:
         """Initialisiert das DatabaseSchema."""
         self.m_SchemaName = sSchemaName
-        self.m_TableDefinitions = {}
-        self.m_Relationships = []
+        self.m_TableDefinitions: Dict[str, Any] = {}
+        self.m_Relationships: List[Any] = []
         self.m_oResult = oValResult
 
         # log_msg(f"DatabaseSchema '{self.m_SchemaName}' initialisiert.")
