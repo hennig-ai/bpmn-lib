@@ -26,7 +26,8 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "basic-framework>=3.2.0,<3.3.0",
+    # PyPI migration: "basic-framework>=3.2.0,<3.3.0"
+    "basic-framework @ git+https://github.com/hennig-ai/basic-framework.git@main",
     "chardet>=5.0.0",
 ]
 
