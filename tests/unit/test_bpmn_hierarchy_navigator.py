@@ -125,7 +125,7 @@ class TestNextElementsInFlow:
         # Arrange
         navigator_mock = Mock(spec=BPMNHierarchyNavigator)
         mock_database = Mock()
-        mock_database.get_table.return_value = None
+        mock_database.get_table.side_effect = Exception("Tabelle 'sequence_flow' existiert nicht in der Datenbankinstanz.")
         navigator_mock.m_database = mock_database
 
         # Bind the real method to the mock
