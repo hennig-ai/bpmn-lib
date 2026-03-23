@@ -85,12 +85,12 @@ class DatabaseBuilder:
 
                 # Log-Nachricht alle 1000 Zeilen
                 if n_row_count % 1000 == 0:
-                    log_msg(f"Tabelle '{s_table_name}': {n_row_count} Zeilen geladen")
+                    pass  # log_msg(f"Tabelle '{s_table_name}': {n_row_count} Zeilen geladen")
 
-            log_msg(f"Tabelle '{s_table_name}': {n_row_count} Zeilen geladen.")
+            # log_msg(f"Tabelle '{s_table_name}': {n_row_count} Zeilen geladen.")
             n_total_rows += n_row_count
 
-        log_msg(f"Bulk-Load abgeschlossen. Insgesamt {n_total_rows} Zeilen geladen.")
+        # log_msg(f"Bulk-Load abgeschlossen. Insgesamt {n_total_rows} Zeilen geladen.")
 
     def load_table_data(self, s_table_name: str, o_source_container: AbstractContainer) -> None:
         """Laedt Daten fuer eine einzelne Tabelle."""
@@ -98,7 +98,7 @@ class DatabaseBuilder:
         if not self._table_exists_in_schema(s_table_name):
             log_and_raise(f"Tabelle '{s_table_name}' existiert nicht im Schema.")
 
-        log_msg(f"Lade Daten fuer Tabelle '{s_table_name}'...")
+        # log_msg(f"Lade Daten fuer Tabelle '{s_table_name}'...")
 
         # Iterator fuer Source erstellen
         o_source_iterator = o_source_container.create_iterator()
@@ -115,9 +115,9 @@ class DatabaseBuilder:
 
             # Log-Nachricht alle 1000 Zeilen
             if n_row_count % 1000 == 0:
-                log_msg(f"Tabelle '{s_table_name}': {n_row_count} Zeilen geladen")
+                pass  # log_msg(f"Tabelle '{s_table_name}': {n_row_count} Zeilen geladen")
 
-        log_msg(f"Tabelle '{s_table_name}': {n_row_count} Zeilen geladen.")
+        # log_msg(f"Tabelle '{s_table_name}': {n_row_count} Zeilen geladen.")
 
     def validate_all_constraints(self) -> None:
         """Prueft nachtraeglich alle Constraints."""
