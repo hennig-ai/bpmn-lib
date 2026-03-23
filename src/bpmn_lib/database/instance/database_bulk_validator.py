@@ -2,17 +2,13 @@
 DatabaseBulkValidator - Nachtraegliche Validierung aller Daten.
 """
 
-from typing import Dict, List, Any
+from typing import List
 from basic_framework.proc_frame import log_msg, log_and_raise
 from basic_framework import is_effectively_null
-from basic_framework.container_utils.container_in_memory import ContainerInMemory
 from basic_framework.container_utils.abstract_iterator import AbstractIterator
 from bpmn_lib.database.schema.database_schema import DatabaseSchema
 from bpmn_lib.database.instance.database_instance import DatabaseInstance
 from bpmn_lib.utils.validation_result import ValidationResult
-from bpmn_lib.database.schema.table_definition import TableDefinition
-from bpmn_lib.database.schema.foreign_key_relationship import ForeignKeyRelationship
-from bpmn_lib.database.schema.column_definition import ColumnDefinition
 
 
 class DatabaseBulkValidator:
@@ -115,7 +111,7 @@ class DatabaseBulkValidator:
             o_table_def = self._schema.get_table_definition(s_table_name)
 
             # NOT NULL Spalten sammeln
-            o_not_null_columns = []
+            o_not_null_columns: List[str] = []
 
             for v_col_name in o_table_def.get_column_names():
                 o_col_def = o_table_def.get_column(str(v_col_name))
@@ -219,52 +215,47 @@ class DatabaseBulkValidator:
             o_source_container = self._instance.get_table(o_fk_rel.get_source_table())
             o_target_container = self._instance.get_table(o_fk_rel.get_target_table())
 
-            if o_source_container is not None and o_target_container is not None:
-                # Alle Werte aus Target-Tabelle sammeln (fuer Performance)
-                o_target_values = {}
+            # Alle Werte aus Target-Tabelle sammeln (fuer Performance)
+            o_target_values = {}
 
-                o_target_iterator = o_target_container.create_iterator()
+            o_target_iterator = o_target_container.create_iterator()
 
-                while not o_target_iterator.is_empty():
-                    s_target_value = o_target_iterator.value(o_fk_rel.get_target_column())
+            while not o_target_iterator.is_empty():
+                s_target_value = o_target_iterator.value(o_fk_rel.get_target_column())
 
-                    if not is_effectively_null(s_target_value):
-                        s_target_key = str(s_target_value)
-                        if s_target_key not in o_target_values:
-                            o_target_values[s_target_key] = True
-                    else:
-                        pass
-
-                    o_target_iterator.pp()
-
-                # Durch Source-Tabelle iterieren und FK pruefen
-                o_source_iterator = o_source_container.create_iterator()
-
-                n_violations = 0
-
-                while not o_source_iterator.is_empty():
-                    v_source_value = o_source_iterator.value(o_fk_rel.get_source_column())
-
-                    # NULL-Werte sind erlaubt fuer FK
-                    if not is_effectively_null(v_source_value):
-                        s_source_key = str(v_source_value)
-
-                        # Pruefen ob Wert in Target existiert
-                        if s_source_key not in o_target_values:
-                            self._add_validation_error(f"Foreign Key Verletzung: '{o_fk_rel.get_description()}' - "
-                                                     f"Wert '{s_source_key}' existiert nicht in Zieltabelle, "
-                                                     f"Zeile {o_source_iterator.position()} in '{o_fk_rel.get_source_table()}'")
-                            b_success = False
-                            n_violations += 1
-
-                    o_source_iterator.pp()
-
-                if n_violations == 0:
-                    pass
+                if not is_effectively_null(s_target_value):
+                    s_target_key = str(s_target_value)
+                    if s_target_key not in o_target_values:
+                        o_target_values[s_target_key] = True
                 else:
-                    log_msg(f"FK '{o_fk_rel.get_description()}': Ungültige Referenzen gefunden.")
-            else:
-                log_and_raise("Hier ist eine Relationsdefinition zwischen zwei Tabellen kaputt")
+                    pass
+
+                o_target_iterator.pp()
+
+            # Durch Source-Tabelle iterieren und FK pruefen
+            o_source_iterator = o_source_container.create_iterator()
+
+            n_violations = 0
+
+            while not o_source_iterator.is_empty():
+                v_source_value = o_source_iterator.value(o_fk_rel.get_source_column())
+
+                # NULL-Werte sind erlaubt fuer FK
+                if not is_effectively_null(v_source_value):
+                    s_source_key = str(v_source_value)
+
+                    # Pruefen ob Wert in Target existiert
+                    if s_source_key not in o_target_values:
+                        self._add_validation_error(f"Foreign Key Verletzung: '{o_fk_rel.get_description()}' - "
+                                                 f"Wert '{s_source_key}' existiert nicht in Zieltabelle, "
+                                                 f"Zeile {o_source_iterator.position()} in '{o_fk_rel.get_source_table()}'")
+                        b_success = False
+                        n_violations += 1
+
+                o_source_iterator.pp()
+
+            if n_violations > 0:
+                log_msg(f"FK '{o_fk_rel.get_description()}': Ungültige Referenzen gefunden.")
 
         return b_success
 
@@ -282,7 +273,7 @@ class DatabaseBulkValidator:
             o_table_def = self._schema.get_table_definition(s_table_name)
 
             # Spalten mit Value Domain sammeln
-            o_value_domain_columns = []
+            o_value_domain_columns: List[str] = []
 
             for v_col_name in o_table_def.get_column_names():
                 if o_table_def.has_value_domain(str(v_col_name)):

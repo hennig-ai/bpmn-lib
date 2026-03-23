@@ -30,9 +30,9 @@ jobs:
         run: |
           python -m pytest tests/ -v
 
-      - name: Type check with mypy
+      - name: Type check with pyright
         run: |
-          mypy src/bpmn_lib --ignore-missing-imports
+          pyright
 
   bump-version:
     needs: test

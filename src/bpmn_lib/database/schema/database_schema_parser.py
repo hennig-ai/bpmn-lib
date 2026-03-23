@@ -71,7 +71,7 @@ class DatabaseSchemaParser:
 
         oTable = list(oTableList.values())[0]
 
-        oResult = {}
+        oResult: Dict[str, KnotObject] = {}
         # Create iterator to go through rows
         oIT = oTable.create_iterator()
 
@@ -275,9 +275,6 @@ class DatabaseSchemaParser:
         """Sucht und parst Value Domains (aus separaten Markdown-Strukturen)."""
         log_msg("Suche Value Domains im Markdown-Dokument...")
 
-        # Alle Knoten durchsuchen
-        oAllNodes = oMarkdownDoc.get_root_children()
-
         # Rekursiv nach Value Domain Definitionen suchen
         self.search_value_domains_recursive(oMarkdownDoc.get_root_node())
 
@@ -334,7 +331,7 @@ class DatabaseSchemaParser:
 
     def parse_value_list(self, sValues: str) -> List[str]:
         """Parst eine Liste von Werten."""
-        oValues = []
+        oValues: List[str] = []
 
         # Werte durch Komma trennen
         aValues = sValues.split(",")

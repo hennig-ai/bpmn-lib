@@ -1,0 +1,5 @@
+{
+    "typeCheckingMode": "strict",
+    "include": ["src/bpmn_lib"],
+    "reportMissingTypeStubs": "none"
+}

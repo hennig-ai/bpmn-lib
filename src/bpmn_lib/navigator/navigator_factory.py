@@ -23,7 +23,6 @@ def create_navigator(
     data_file: str,
     hierarchy_file: str,
     log_dir: str,
-    schema_name: str = "BPMN Schema"
 ) -> BPMNHierarchyNavigator:
     """
     Factory-Funktion: Erstellt BPMNHierarchyNavigator aus drei Markdown-Dateien.
@@ -33,7 +32,6 @@ def create_navigator(
         data_file: Pfad zu den Daten (BPMN-Elemente)
         hierarchy_file: Pfad zur Vererbungshierarchie (parent-child)
         log_dir: Verzeichnis für Validation-Reports bei Fehlern
-        schema_name: Name des Schemas (optional)
 
     Returns:
         BPMNHierarchyNavigator für Navigation durch die Prozessbeschreibung
@@ -49,11 +47,14 @@ def create_navigator(
     _validate_file_exists(data_file, "Daten-Datei")
     _validate_file_exists(hierarchy_file, "Hierarchie-Datei")
 
+    # Schema-Name aus Dateiname ableiten
+    schema_name = Path(schema_file).stem
+
     # ValidationResult erstellen
     val_result = ValidationResult()
 
     # 1. Markdown-Dokumente laden
-    # log_msg("1. Lade Markdown-Dokumente...")
+    log_msg("1. Lade Markdown-Dokumente...")
     schema_doc = MarkdownDocument()
     schema_doc.load_from_file(schema_file)
 
@@ -64,7 +65,7 @@ def create_navigator(
     hierarchy_doc.load_from_file(hierarchy_file)
 
     # 2. Schema parsen
-    # log_msg("2. Parse Schema...")
+    log_msg("2. Parse Schema...")
     parser = DatabaseSchemaParser()
     schema = parser.parse_documents(val_result, schema_doc, schema_name)
 
@@ -90,15 +91,15 @@ def create_navigator(
         )
 
     # 7. Indizes erstellen
-    # log_msg("6. Erstelle Indizes...")
+    log_msg("7. Erstelle Indizes...")
     builder.build_indexes_if_valid()
 
     # 8. Read-Only Datenbank erstellen
-    log_msg("7. Erstelle Read-Only Datenbank...")
+    log_msg("8. Erstelle Read-Only Datenbank...")
     database = builder.create_read_only_database()
 
     # 9. Navigator erstellen
-    log_msg("8. Erstelle Navigator...")
+    log_msg("9. Erstelle Navigator...")
     navigator = BPMNHierarchyNavigator(val_result, database, hierarchy_doc)
 
     # 10. Finale Fehlerprüfung (Navigator-Validierung)

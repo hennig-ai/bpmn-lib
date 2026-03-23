@@ -2,12 +2,11 @@
 DatabaseSchema - Zentrale Verwaltung des gesamten Datenbankschemas.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from basic_framework.proc_frame import log_msg, log_and_raise
 from bpmn_lib.utils.validation_result import ValidationResult
 from bpmn_lib.database.schema.table_definition import TableDefinition
 from bpmn_lib.database.schema.foreign_key_relationship import ForeignKeyRelationship
-from bpmn_lib.database.schema.column_definition import ColumnDefinition
 
 
 class DatabaseSchema:

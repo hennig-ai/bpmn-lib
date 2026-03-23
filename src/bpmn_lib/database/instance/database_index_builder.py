@@ -6,8 +6,6 @@ from typing import List
 from basic_framework.proc_frame import log_msg
 from bpmn_lib.database.schema.database_schema import DatabaseSchema
 from bpmn_lib.database.instance.database_instance import DatabaseInstance
-from bpmn_lib.database.schema.table_definition import TableDefinition
-from bpmn_lib.database.schema.foreign_key_relationship import ForeignKeyRelationship
 
 
 class DatabaseIndexBuilder:

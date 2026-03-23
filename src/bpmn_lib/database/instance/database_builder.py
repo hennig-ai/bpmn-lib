@@ -2,11 +2,10 @@
 DatabaseBuilder - Koordiniert den Aufbau der Datenbank in Phasen.
 """
 
-from typing import Dict, List, Any, Union
+from typing import Dict
 from basic_framework.proc_frame import log_msg, log_and_raise
 from basic_framework.container_utils.container_in_memory import ContainerInMemory
 from basic_framework.container_utils.abstract_container import AbstractContainer
-from basic_framework.container_utils.abstract_iterator import AbstractIterator
 from bpmn_lib.database.schema.database_schema import DatabaseSchema
 from bpmn_lib.database.instance.database_instance import DatabaseInstance
 from bpmn_lib.utils.validation_result import ValidationResult
@@ -39,20 +38,10 @@ class DatabaseBuilder:
 
         log_msg(f"DatabaseBuilder fuer Schema '{self._schema.get_schema_name()}' initialisiert.")
 
-    def load_all_data(self, o_data_source: Any) -> None:
+    def load_all_data(self, o_data_source: Dict[str, ContainerInMemory]) -> None:
         """Laedt alle Daten ohne Constraint-Pruefung."""
         log_msg("Starte Bulk-Load der Daten...")
-
-        # Je nach Typ der Datenquelle
-        if isinstance(o_data_source, dict):
-            o_dict = o_data_source
-            # Dictionary mit Tabellennamen -> ContainerInMemory
-            self._load_from_container_dictionary(o_dict)
-        elif isinstance(o_data_source, list):
-            # Collection von Datensaetzen
-            log_and_raise("load_all_data: Collection als Datenquelle noch nicht implementiert.")
-        else:
-            log_and_raise(f"load_all_data: Unbekannter Datenquellentyp '{type(o_data_source).__name__}'.")
+        self._load_from_container_dictionary(o_data_source)
 
     def _load_from_container_dictionary(self, o_container_dict: Dict[str, ContainerInMemory]) -> None:
         """Laedt Daten aus einem Dictionary von ContainerInMemory-Objekten."""

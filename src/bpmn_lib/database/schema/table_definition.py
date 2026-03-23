@@ -2,8 +2,8 @@
 TableDefinition - Repräsentiert eine einzelne Tabelle mit allen Metadaten.
 """
 
-from typing import Dict, List, Any, Optional
-from basic_framework.proc_frame import log_and_raise, log_msg
+from typing import Dict, List, Optional
+from basic_framework.proc_frame import log_and_raise
 from basic_framework.container_utils.container_in_memory import ContainerInMemory
 from basic_framework.container_utils.abstract_iterator import AbstractIterator
 from bpmn_lib.database.schema.column_definition import ColumnDefinition
@@ -94,7 +94,7 @@ class TableDefinition:
     def validate_row(self, oIterator: AbstractIterator, sErrorDetail: str = "") -> bool:
         """Validiert ob eine Zeile alle Constraints erfüllt (Iterator-basiert)."""
         bValid = True
-        error_details = []
+        error_details: List[str] = []
 
         # 1. NOT NULL Constraints prüfen
         for vKey in self._columns.keys():
@@ -144,9 +144,6 @@ class TableDefinition:
                 if str(vValue) not in [str(v) for v in oAllowedValues]:
                     error_details.append(f"Value Domain verletzt fuer Spalte '{vKey}': '{vValue}' nicht erlaubt. ")
                     bValid = False
-
-        # sErrorDetail als String zusammenfügen
-        sErrorDetail = "".join(error_details)
 
         return bValid
 
