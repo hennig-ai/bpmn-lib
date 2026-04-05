@@ -7,7 +7,7 @@ Uses Protocol/Hook pattern for extensibility.
 
 from datetime import datetime
 from pathlib import Path
-from typing import List, Protocol, Optional, runtime_checkable
+from typing import List, Protocol, Optional, TextIO, Union, runtime_checkable
 from basic_framework.proc_frame import log_msg
 
 
@@ -89,29 +89,34 @@ class ValidationResult:
 
         return s_content
 
-    def write_to_file(self, log_dir: str, prefix: str = "validation_errors") -> Path:
+    def write_report(self, target: Union[str, TextIO], prefix: str = "validation_errors") -> Optional[Path]:
         """
-        Schreibt den Validation-Report in eine Datei im Log-Verzeichnis.
+        Schreibt den Validation-Report an das angegebene Ziel.
 
         Args:
-            log_dir: Pfad zum Log-Verzeichnis
-            prefix: Präfix für den Dateinamen
+            target: Entweder ein Verzeichnispfad (str) für Dateiausgabe
+                    oder ein TextIO-Objekt (z.B. sys.stdout) für Stream-Ausgabe
+            prefix: Präfix für den Dateinamen (nur bei Dateiausgabe relevant)
 
         Returns:
-            Path zur geschriebenen Datei
+            Path zur geschriebenen Datei bei Dateiausgabe, None bei Stream-Ausgabe
         """
-        log_dir_path = Path(log_dir)
-        log_dir_path.mkdir(parents=True, exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{prefix}_{timestamp}.txt"
-        filepath = log_dir_path / filename
-
         report = self.generate_validation_report()
-        filepath.write_text(report, encoding='utf-8')
 
-        log_msg(f"Validation-Report geschrieben nach: {filepath}")
-        return filepath
+        if isinstance(target, str):
+            log_dir_path = Path(target)
+            log_dir_path.mkdir(parents=True, exist_ok=True)
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{prefix}_{timestamp}.txt"
+            filepath = log_dir_path / filename
+
+            filepath.write_text(report, encoding='utf-8')
+            log_msg(f"Validation-Report geschrieben nach: {filepath}")
+            return filepath
+
+        target.write(report + "\n")
+        return None
 
     def get_messages(self) -> List[str]:
         """Return all validation messages."""

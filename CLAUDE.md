@@ -6,6 +6,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **bpmn-lib** is a BPMN (Business Process Model and Notation) Process Navigation Library for navigating BPMN element hierarchies and managing in-memory database operations.
 
+## Development Commands
+
+```bash
+# Install
+pip install -e .              # Standard
+pip install -e ".[dev]"       # With dev dependencies (pytest, pyright, etc.)
+
+# Tests
+pytest tests/ -v                                          # All tests
+pytest tests/unit/ -v                                     # Unit tests only
+pytest tests/integration/ -v                              # Integration tests only
+pytest tests/unit/test_bpmn_hierarchy_navigator.py -v     # Single file
+pytest tests/unit/test_bpmn_hierarchy_navigator.py::test_name -v  # Single test
+pytest tests/ --cov=bpmn_lib --cov-report=term-missing    # With coverage
+
+# Type checking (strict mode)
+pyright
+```
+
+## CI Pipeline
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on push/PR to `main`:
+1. **Test matrix**: Python 3.10, 3.11, 3.12, 3.13 — runs `pytest tests/ -v` + `pyright`
+2. **Auto version bump**: Increments patch version in `pyproject.toml` on main push
+
 ## Architecture
 
 ### Layer Structure
@@ -33,12 +58,11 @@ navigator = create_navigator(
     schema_file="path/to/schema.md",      # Table definitions, constraints
     data_file="path/to/data.md",          # BPMN element instances
     hierarchy_file="path/to/hierarchy.md", # Parent-child relationships
-    log_dir="path/to/logs",               # Validation error reports
-    schema_name="BPMN Schema"
+    report_target="path/to/logs",         # Optional: str (dir) or TextIO for validation reports
 )
 ```
 
-The factory orchestrates the complete pipeline: parse schema → load data → validate constraints → build indexes → create navigator.
+The factory orchestrates the complete pipeline: parse schema → load data → validate constraints → build indexes → create navigator. Schema name is derived from `schema_file` filename.
 
 ### Navigator API
 
@@ -85,6 +109,17 @@ This library depends on `basic_framework` which provides:
 - `ContainerInMemory`, `AbstractContainer`, `AbstractIterator` - Data structures
 - `ConditionEquals` - Query conditions
 - `KnotObject` - Tree node structure for markdown parsing
+
+## Internal Documentation
+
+`docs/internal/` contains design documents, validation rules, and solution designs. See `docs/internal/CLAUDE.md` for structure details.
+
+For BPMN navigator validation requirements (in development):
+- Requirements overview: `docs/internal/features_or_solution_designs/20260405_BPMN-validation/requirements-bpmn-navigator-validation.md`
+- Process rules (`PRC-xxx`): `req_list/req_for_process/` — rules that validate a process as a whole
+- Element rules (per element type): `req_list/req_for_elements/` — rules that validate an element and its surroundings
+- Validation levels: `basic` (minimal) < `spec_v2` (BPMN 2.0.2 conformance) < `best_practice` (recommendations beyond spec)
+- Rule ID prefixes encode element type: `PRC` (Process), `FLO` (Flow-Object), `SRT` (Start-Event), `END` (End-Event), `XOR` (Exclusive Gateway), `AND` (Parallel Gateway)
 
 ## Testing Infrastructure
 
