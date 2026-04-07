@@ -123,6 +123,10 @@ class DatabaseSchema:
         # Für diese Version nur als Platzhalter
         log_msg("Pruefung auf zirkulaere Abhaengigkeiten uebersprungen (noch nicht implementiert).")
 
+    def has_table(self, sTableName: str) -> bool:
+        """Prüft ob eine Tabelle mit dem Namen existiert."""
+        return sTableName in self.m_TableDefinitions
+
     def get_table_definition(self, sTableName: str) -> TableDefinition:
         """Gibt eine spezifische Tabellendefinition zurück."""
         if sTableName in self.m_TableDefinitions:

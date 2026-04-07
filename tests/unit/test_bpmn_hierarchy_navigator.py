@@ -11,7 +11,11 @@ import pytest
 from unittest.mock import MagicMock, Mock
 from typing import List, Optional
 
-from bpmn_lib.navigator.bpmn_hierarchy_navigator import BPMNHierarchyNavigator
+from bpmn_lib.navigator.bpmn_hierarchy_navigator import (
+    BPMNHierarchyNavigator,
+    OutgoingSequenceFlowInfo,
+    IncomingSequenceFlowInfo,
+)
 
 
 class TestNextElementsInFlow:
@@ -214,3 +218,290 @@ class TestNextElementsInFlowIntegration:
         """Test with real DatabaseInstance and schema."""
         # TODO: Implement when DatabaseInstance test fixtures are available
         pass
+
+
+class TestSequenceFlowInfoDataclasses:
+    """Tests for OutgoingSequenceFlowInfo and IncomingSequenceFlowInfo with is_default field."""
+
+    def test_outgoing_with_is_default_true(self):
+        info = OutgoingSequenceFlowInfo(
+            sequence_flow_id="f1", target_element_id="t1",
+            condition_expression=None, is_default=True,
+        )
+        assert info.is_default is True
+
+    def test_outgoing_with_is_default_none(self):
+        info = OutgoingSequenceFlowInfo(
+            sequence_flow_id="f1", target_element_id="t1",
+            condition_expression=None, is_default=None,
+        )
+        assert info.is_default is None
+
+    def test_incoming_with_is_default_none(self):
+        info = IncomingSequenceFlowInfo(
+            sequence_flow_id="f1", source_element_id="s1",
+            condition_expression=None, is_default=None,
+        )
+        assert info.is_default is None
+
+    def test_incoming_with_is_default_false(self):
+        info = IncomingSequenceFlowInfo(
+            sequence_flow_id="f1", source_element_id="s1",
+            condition_expression="x > 1", is_default=False,
+        )
+        assert info.is_default is False
+        assert info.condition_expression == "x > 1"
+
+    def test_frozen_dataclass_immutability(self):
+        info = OutgoingSequenceFlowInfo(
+            sequence_flow_id="f1", target_element_id="t1",
+            condition_expression=None, is_default=True,
+        )
+        with pytest.raises(AttributeError):
+            info.is_default = False  # type: ignore[misc]
+
+
+class TestConvertToOptionalBool:
+    """Tests for _convert_to_optional_bool helper method."""
+
+    def _create_navigator(self) -> BPMNHierarchyNavigator:
+        nav_mock = Mock(spec=BPMNHierarchyNavigator)
+        nav_mock._convert_to_optional_bool = BPMNHierarchyNavigator._convert_to_optional_bool.__get__(
+            nav_mock, BPMNHierarchyNavigator
+        )
+        return nav_mock
+
+    def test_none_returns_none(self):
+        nav = self._create_navigator()
+        assert nav._convert_to_optional_bool(None) is None
+
+    def test_empty_string_returns_none(self):
+        nav = self._create_navigator()
+        assert nav._convert_to_optional_bool("") is None
+
+    def test_true_string_returns_true(self):
+        nav = self._create_navigator()
+        assert nav._convert_to_optional_bool("true") is True
+
+    def test_true_uppercase_returns_true(self):
+        nav = self._create_navigator()
+        assert nav._convert_to_optional_bool("TRUE") is True
+
+    def test_one_returns_true(self):
+        nav = self._create_navigator()
+        assert nav._convert_to_optional_bool("1") is True
+
+    def test_minus_one_returns_true(self):
+        nav = self._create_navigator()
+        assert nav._convert_to_optional_bool("-1") is True
+
+    def test_false_string_returns_false(self):
+        nav = self._create_navigator()
+        assert nav._convert_to_optional_bool("FALSE") is False
+
+    def test_zero_returns_false(self):
+        nav = self._create_navigator()
+        assert nav._convert_to_optional_bool("0") is False
+
+    def test_invalid_value_raises(self):
+        nav = self._create_navigator()
+        with pytest.raises(ValueError):
+            nav._convert_to_optional_bool("invalid")
+
+
+class TestGetOutgoingSequenceFlowsIsDefault:
+    """Tests for get_outgoing_sequence_flows reading is_default from data (TC-003)."""
+
+    def _create_navigator_with_outgoing_flows(self, flows: List[dict]):
+        """Create a mock navigator with outgoing flow data including is_default."""
+        nav_mock = Mock(spec=BPMNHierarchyNavigator)
+
+        # Bind real methods
+        nav_mock.get_outgoing_sequence_flows = BPMNHierarchyNavigator.get_outgoing_sequence_flows.__get__(
+            nav_mock, BPMNHierarchyNavigator
+        )
+        nav_mock._convert_to_optional_bool = BPMNHierarchyNavigator._convert_to_optional_bool.__get__(
+            nav_mock, BPMNHierarchyNavigator
+        )
+        nav_mock._format_db_internal_id = lambda x: str(x)
+
+        mock_table = Mock()
+
+        def create_iterator_side_effect(filter_active, condition):
+            source_ref = condition._value
+            matching = [f for f in flows if f["source"] == source_ref]
+            mock_iter = Mock()
+            state = {"index": 0}
+
+            def is_empty():
+                return state["index"] >= len(matching)
+
+            def value(field):
+                f = matching[state["index"]]
+                return f.get(field)
+
+            def pp():
+                state["index"] += 1
+
+            mock_iter.is_empty.side_effect = is_empty
+            mock_iter.value.side_effect = value
+            mock_iter.pp.side_effect = pp
+            return mock_iter
+
+        mock_table.create_iterator.side_effect = create_iterator_side_effect
+        mock_db = Mock()
+        mock_db.get_table.return_value = mock_table
+        nav_mock.m_database = mock_db
+        return nav_mock
+
+    def test_outgoing_flow_with_is_default_true(self):
+        """Flow with is_default='TRUE' returns OutgoingSequenceFlowInfo.is_default == True."""
+        nav = self._create_navigator_with_outgoing_flows([
+            {"source": "e1", "bpmn_element_id": "f1", "target_bpmn_element_id": "t1",
+             "source_bpmn_element_id": "e1", "condition_expression": None, "is_default": "TRUE"},
+        ])
+        result = nav.get_outgoing_sequence_flows("e1")
+        assert len(result) == 1
+        assert result[0].is_default is True
+
+    def test_outgoing_flow_with_empty_is_default(self):
+        """Flow with empty is_default returns OutgoingSequenceFlowInfo.is_default is None."""
+        nav = self._create_navigator_with_outgoing_flows([
+            {"source": "e1", "bpmn_element_id": "f2", "target_bpmn_element_id": "t2",
+             "source_bpmn_element_id": "e1", "condition_expression": None, "is_default": ""},
+        ])
+        result = nav.get_outgoing_sequence_flows("e1")
+        assert len(result) == 1
+        assert result[0].is_default is None
+
+
+class TestGetIncomingSequenceFlowsIsDefault:
+    """Tests for get_incoming_sequence_flows reading is_default from data (TC-004)."""
+
+    def _create_navigator_with_incoming_flows(self, flows: List[dict]):
+        """Create a mock navigator with incoming flow data including is_default."""
+        nav_mock = Mock(spec=BPMNHierarchyNavigator)
+
+        nav_mock.get_incoming_sequence_flows = BPMNHierarchyNavigator.get_incoming_sequence_flows.__get__(
+            nav_mock, BPMNHierarchyNavigator
+        )
+        nav_mock._convert_to_optional_bool = BPMNHierarchyNavigator._convert_to_optional_bool.__get__(
+            nav_mock, BPMNHierarchyNavigator
+        )
+        nav_mock._format_db_internal_id = lambda x: str(x)
+
+        mock_table = Mock()
+
+        def create_iterator_side_effect(filter_active, condition):
+            target_ref = condition._value
+            matching = [f for f in flows if f["target"] == target_ref]
+            mock_iter = Mock()
+            state = {"index": 0}
+
+            def is_empty():
+                return state["index"] >= len(matching)
+
+            def value(field):
+                f = matching[state["index"]]
+                return f.get(field)
+
+            def pp():
+                state["index"] += 1
+
+            mock_iter.is_empty.side_effect = is_empty
+            mock_iter.value.side_effect = value
+            mock_iter.pp.side_effect = pp
+            return mock_iter
+
+        mock_table.create_iterator.side_effect = create_iterator_side_effect
+        mock_db = Mock()
+        mock_db.get_table.return_value = mock_table
+        nav_mock.m_database = mock_db
+        return nav_mock
+
+    def test_incoming_flow_with_is_default_true(self):
+        """Flow with is_default='TRUE' returns IncomingSequenceFlowInfo.is_default == True."""
+        nav = self._create_navigator_with_incoming_flows([
+            {"target": "e1", "bpmn_element_id": "f1", "source_bpmn_element_id": "s1",
+             "target_bpmn_element_id": "e1", "condition_expression": None, "is_default": "TRUE"},
+        ])
+        result = nav.get_incoming_sequence_flows("e1")
+        assert len(result) == 1
+        assert result[0].is_default is True
+
+    def test_incoming_flow_with_empty_is_default(self):
+        """Flow with empty is_default returns IncomingSequenceFlowInfo.is_default is None."""
+        nav = self._create_navigator_with_incoming_flows([
+            {"target": "e1", "bpmn_element_id": "f2", "source_bpmn_element_id": "s2",
+             "target_bpmn_element_id": "e1", "condition_expression": None, "is_default": ""},
+        ])
+        result = nav.get_incoming_sequence_flows("e1")
+        assert len(result) == 1
+        assert result[0].is_default is None
+
+
+class TestGetElementIdsByType:
+    """Tests for get_element_ids_by_type method."""
+
+    def _create_navigator_with_elements(self, elements: dict) -> BPMNHierarchyNavigator:
+        """Create mock navigator with element mappings and descendant logic.
+
+        Args:
+            elements: Dict mapping element_id -> list of ancestor table names
+        """
+        nav_mock = Mock(spec=BPMNHierarchyNavigator)
+        nav_mock.m_element_mapping = {eid: {} for eid in elements}
+        nav_mock._FLOW_OBJECT_TABLES = BPMNHierarchyNavigator._FLOW_OBJECT_TABLES
+
+        def mock_is_descendant(element_id: str, ancestor_table: str) -> bool:
+            if element_id not in elements:
+                return False
+            return ancestor_table in elements[element_id]
+
+        nav_mock.is_element_descendant_of.side_effect = mock_is_descendant
+        nav_mock.get_element_ids_by_type = BPMNHierarchyNavigator.get_element_ids_by_type.__get__(
+            nav_mock, BPMNHierarchyNavigator
+        )
+        return nav_mock
+
+    def test_get_start_events(self):
+        nav = self._create_navigator_with_elements({
+            "e1": ["event", "start_event"],
+            "e2": ["activity", "task"],
+            "e3": ["event", "start_event"],
+        })
+        result = nav.get_element_ids_by_type("start_event")
+        assert sorted(result) == ["e1", "e3"]
+
+    def test_flow_object_returns_all_activities_events_gateways(self):
+        nav = self._create_navigator_with_elements({
+            "e1": ["activity", "task"],
+            "e2": ["event", "start_event"],
+            "e3": ["gateway", "exclusive_gateway"],
+            "e4": [],  # sequence_flow - not a flow_object
+        })
+        result = nav.get_element_ids_by_type("flow_object")
+        assert sorted(result) == ["e1", "e2", "e3"]
+
+    def test_flow_object_no_duplicates(self):
+        nav = self._create_navigator_with_elements({
+            "e1": ["activity", "event"],  # hypothetical: descendant of both
+        })
+        result = nav.get_element_ids_by_type("flow_object")
+        assert result == ["e1"]
+
+    def test_nonexistent_type_returns_empty(self):
+        nav = self._create_navigator_with_elements({
+            "e1": ["activity", "task"],
+        })
+        result = nav.get_element_ids_by_type("nonexistent_type")
+        assert result == []
+
+    def test_flow_object_empty_bpmn_returns_empty(self):
+        """TC-012: flow_object with no flow objects (only data objects) returns empty list."""
+        nav = self._create_navigator_with_elements({
+            "d1": [],  # data object — not a descendant of activity, event, or gateway
+            "d2": [],  # another data object
+        })
+        result = nav.get_element_ids_by_type("flow_object")
+        assert result == []

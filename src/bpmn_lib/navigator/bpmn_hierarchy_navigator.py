@@ -14,7 +14,13 @@ from bpmn_lib.database.schema.column_definition import ColumnDefinition
 from bpmn_lib.utils.validation_result import ValidationResult
 from basic_framework import MarkdownDocument, MarkdownFileAsTable
 # from archive.hierarchy_parser import HierarchyParser  # Unused - commented out
-from bpmn_lib.navigator.bpmn_constants import *
+from bpmn_lib.navigator.bpmn_constants import (
+    TBL_ACTIVITY,
+    TBL_TASK,
+    TBL_EVENT,
+    TBL_GATEWAY,
+    TBL_DATA_ASSOCIATION,
+)
 
 
 @dataclass(frozen=True)
@@ -24,6 +30,7 @@ class OutgoingSequenceFlowInfo:
     sequence_flow_id: str
     target_element_id: str
     condition_expression: Optional[str]
+    is_default: Optional[bool]
 
 
 @dataclass(frozen=True)
@@ -33,10 +40,13 @@ class IncomingSequenceFlowInfo:
     sequence_flow_id: str
     source_element_id: str
     condition_expression: Optional[str]
+    is_default: Optional[bool]
 
 
 class BPMNHierarchyNavigator:
     """Zentrale Klasse für die Navigation und Verwaltung der BPMN-Element-Hierarchie."""
+
+    _FLOW_OBJECT_TABLES: List[str] = ["activity", "event", "gateway"]
 
     #def __init__(self):
     def __init__(self, val_result: ValidationResult, database: DatabaseInstance, hierarchy_doc: MarkdownDocument):
@@ -434,6 +444,10 @@ class BPMNHierarchyNavigator:
         """Prüft ob eine Tabelle ein Blatt ist."""
         return s_table_name in self.m_leaf_tables
 
+    def get_schema(self) -> "DatabaseSchema":
+        """Returns the DatabaseSchema for schema validation and introspection."""
+        return self.m_database.get_schema()
+
     def get_process_elements(self, s_process_id: str) -> List[str]:
         """Gibt alle Element-IDs für einen Prozess zurück."""
         if s_process_id in self.m_process_elements:
@@ -588,10 +602,13 @@ class BPMNHierarchyNavigator:
         # Flow-Daten sammeln
         outgoing_flows: List[OutgoingSequenceFlowInfo] = []
         while not iterator.is_empty():
+            is_default_raw = iterator.value("is_default")
+            is_default_value = self._convert_to_optional_bool(is_default_raw)
             flow_info = OutgoingSequenceFlowInfo(
                 sequence_flow_id=iterator.value("bpmn_element_id"),
                 target_element_id=iterator.value("target_bpmn_element_id"),
                 condition_expression=iterator.value("condition_expression"),
+                is_default=is_default_value,
             )
             outgoing_flows.append(flow_info)
             iterator.pp()
@@ -630,10 +647,13 @@ class BPMNHierarchyNavigator:
         # Flow-Daten sammeln
         incoming_flows: List[IncomingSequenceFlowInfo] = []
         while not iterator.is_empty():
+            is_default_raw = iterator.value("is_default")
+            is_default_value = self._convert_to_optional_bool(is_default_raw)
             flow_info = IncomingSequenceFlowInfo(
                 sequence_flow_id=iterator.value("bpmn_element_id"),
                 source_element_id=iterator.value("source_bpmn_element_id"),
                 condition_expression=iterator.value("condition_expression"),
+                is_default=is_default_value,
             )
             incoming_flows.append(flow_info)
             iterator.pp()
@@ -945,6 +965,35 @@ class BPMNHierarchyNavigator:
 
         # Unbekannte Typen -> als String zurückgeben
         return str_value
+
+    def get_element_ids_by_type(self, element_type: str) -> List[str]:
+        """Gibt alle Element-IDs zurueck, die dem angegebenen Typ entsprechen."""
+        result: List[str] = []
+        if element_type == "flow_object":
+            seen: set[str] = set()
+            for table in self._FLOW_OBJECT_TABLES:
+                for element_id in self.m_element_mapping:
+                    if element_id not in seen and self.is_element_descendant_of(element_id, table):
+                        result.append(element_id)
+                        seen.add(element_id)
+        else:
+            for element_id in self.m_element_mapping:
+                if self.is_element_descendant_of(element_id, element_type):
+                    result.append(element_id)
+        return result
+
+    def _convert_to_optional_bool(self, value: Any) -> Optional[bool]:
+        """Konvertiert einen Wert zu Optional[bool] fuer is_default Felder."""
+        if value is None or value == "":
+            return None
+        upper_val = str(value).upper()
+        if upper_val in ["TRUE", "1", "-1"]:
+            return True
+        if upper_val in ["FALSE", "0"]:
+            return False
+        log_and_raise(ValueError(
+            f"Konvertierung zu bool fehlgeschlagen fuer is_default, Wert: '{value}'"
+        ))
 
     def is_element_descendant_of(self, s_bpmn_element_id: str, s_ancestor_table: str) -> bool:
         """Prüft ob ein Element von einer bestimmten Tabelle abstammt."""

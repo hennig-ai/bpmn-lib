@@ -17,6 +17,9 @@ from bpmn_lib.utils.validation_result import ValidationResult
 from bpmn_lib.database.schema.database_schema_parser import DatabaseSchemaParser
 from bpmn_lib.database.instance.database_builder import DatabaseBuilder
 from bpmn_lib.navigator.bpmn_hierarchy_navigator import BPMNHierarchyNavigator
+from bpmn_lib.validation.rule_store import build_rule_store
+from bpmn_lib.validation.rule_engine import BPMNRuleEngine
+from bpmn_lib.validation.exceptions import BPMNValidationError
 
 
 def create_navigator(
@@ -24,6 +27,8 @@ def create_navigator(
     data_file: str,
     hierarchy_file: str,
     report_target: Optional[Union[str, TextIO]] = None,
+    rules_dir: Optional[str] = None,
+    validation_level: Optional[str] = None,
 ) -> BPMNHierarchyNavigator:
     """
     Factory-Funktion: Erstellt BPMNHierarchyNavigator aus drei Markdown-Dateien.
@@ -35,15 +40,25 @@ def create_navigator(
         report_target: Ziel für Validation-Reports bei Fehlern.
             None = kein Report, str = Verzeichnispfad für Dateiausgabe,
             TextIO (z.B. sys.stdout) = Stream-Ausgabe
+        rules_dir: Pfad zum Verzeichnis mit BPMN-Validierungsregeln (*.md).
+            Muss zusammen mit validation_level angegeben werden.
+        validation_level: Validierungsstufe (basic, spec_v2, best_practice, personal).
+            Muss zusammen mit rules_dir angegeben werden.
 
     Returns:
         BPMNHierarchyNavigator für Navigation durch die Prozessbeschreibung
 
     Raises:
-        ValueError: Wenn Dateien nicht existieren
+        ValueError: Wenn Dateien nicht existieren oder Parameter inkonsistent
         Exception: Bei Validierungsfehlern (nach Schreiben des Reports)
     """
     # log_msg(f"Navigator-Factory: Starte Aufbau aus {schema_file}, {data_file}, {hierarchy_file}")
+
+    # Parameter-Konsistenzcheck: rules_dir und validation_level muessen beide gesetzt oder beide None sein
+    if (rules_dir is None) != (validation_level is None):
+        log_and_raise(ValueError(
+            "rules_dir and validation_level must both be provided or both be None"
+        ))
 
     # Dateien validieren
     _validate_file_exists(schema_file, "Schema-Datei")
@@ -122,6 +137,30 @@ def create_navigator(
         log_and_raise(
             f"Navigator-Validierung fehlgeschlagen: {val_result.count()} Fehler."
         )
+
+    # BPMN-Regelvalidierung (optional)
+    if rules_dir is not None and validation_level is not None:
+        # D.8: val_result.clear() vor BPMN-Validierung
+        val_result.clear()
+
+        log_msg("11. Lade BPMN-Validierungsregeln...")
+        rule_store = build_rule_store(rules_dir, navigator)
+
+        log_msg("12. Fuehre BPMN-Validierung durch...")
+        engine = BPMNRuleEngine(navigator, val_result)
+        engine.validate(rule_store, validation_level)
+
+        if val_result.has_errors():
+            if report_target is not None:
+                filepath = val_result.write_report(report_target, "validation_bpmn_rules")
+                if filepath is not None:
+                    log_and_raise(BPMNValidationError(
+                        f"BPMN-Regelvalidierung fehlgeschlagen: {val_result.count()} Fehler. "
+                        f"Details siehe: {filepath}"
+                    ))
+            log_and_raise(BPMNValidationError(
+                f"BPMN-Regelvalidierung fehlgeschlagen: {val_result.count()} Fehler."
+            ))
 
     log_msg("Navigator-Factory: Aufbau erfolgreich abgeschlossen.")
     return navigator

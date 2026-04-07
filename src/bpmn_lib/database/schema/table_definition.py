@@ -199,3 +199,47 @@ class TableDefinition:
     def get_value_domain(self, sColumnName: str) -> Optional[List[str]]:
         """Gibt die Value Domain für eine Spalte zurück."""
         return self._value_domains.get(sColumnName, None)
+
+    def is_value_in_domain(self, column_name: str, value: str) -> bool:
+        """
+        Check if a value lies in the value domain of a column (Stage 3 of rule schema validation).
+
+        This method is used during rule schema validation (rule_store.py) to check whether
+        subtype values (e.g., "parallel", "start") are valid entries in the value domain
+        of a type column (e.g., "gateway_type", "event_type").
+
+        This is the final validation stage before a rule is accepted:
+        - Stage 1: Table validation (element_type is valid table)
+        - Stage 2: Column validation ({element_type}_type column exists)
+        - Stage 3: Value validation (subtype value is in column domain) ← this method
+
+        Args:
+            column_name: Name of the column (e.g., "gateway_type", "event_type")
+            value: The value to check (e.g., "parallel", "start", "exclusive")
+
+        Returns:
+            True if column exists AND value is in value domain
+            True if column exists but NO value domain is defined (all values allowed)
+            False if column doesn't exist OR value is not in value domain
+
+        Example:
+            >>> table = TableDefinition("gateway")
+            >>> col = ColumnDefinition("gateway_type", "str")
+            >>> table.add_column(col)
+            >>> table.add_value_domain("gateway_type", ["parallel", "exclusive"])
+            >>> table.is_value_in_domain("gateway_type", "parallel")
+            True
+            >>> table.is_value_in_domain("gateway_type", "invalid")
+            False
+        """
+        # Wenn Spalte nicht existiert -> False
+        if not self.has_column(column_name):
+            return False
+
+        # Wenn keine Value Domain definiert -> alle Werte erlaubt
+        domain = self.get_value_domain(column_name)
+        if domain is None:
+            return True
+
+        # Prüfe ob Wert in Value Domain liegt (String-Vergleich)
+        return value in domain
