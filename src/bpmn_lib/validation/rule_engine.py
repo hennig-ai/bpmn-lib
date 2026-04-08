@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List
 
-from basic_framework.proc_frame import log_and_raise, log_msg
+from basic_framework.proc_frame import log_and_raise
 from basic_framework.container_utils.abstract_container import AbstractContainer
 
 from bpmn_lib.navigator.bpmn_hierarchy_navigator import BPMNHierarchyNavigator
@@ -10,13 +10,11 @@ from bpmn_lib.utils.validation_result import ValidationResult
 from bpmn_lib.validation.expression_ast import (
     Assertion,
     Check,
-    CombinedAssertion,
     CountAssertion,
     ExistsAssertion,
     ForEachAssertion,
     WhereClause,
     WhereEquals,
-    WhereNotIn,
 )
 from bpmn_lib.validation.expression_parser import ExpressionParser
 
@@ -109,13 +107,10 @@ class BPMNRuleEngine:
                 if self._navigator.get_element_attribute(eid, where_clause.attribute_name) == where_clause.value
             ]
 
-        if isinstance(where_clause, WhereNotIn):
-            return [
-                eid for eid in element_ids
-                if self._navigator.get_element_attribute(eid, where_clause.attribute_name) not in where_clause.values
-            ]
-
-        log_and_raise(ValueError(f"Unknown where-clause type: {type(where_clause).__name__}"))
+        return [
+            eid for eid in element_ids
+            if self._navigator.get_element_attribute(eid, where_clause.attribute_name) not in where_clause.values
+        ]
 
     # ------------------------------------------------------------------
     # Flow retrieval
@@ -181,7 +176,7 @@ class BPMNRuleEngine:
             self._evaluate_for_each(element_id, assertion, rule)
         elif isinstance(assertion, ExistsAssertion):
             self._evaluate_exists(element_id, assertion, rule)
-        elif isinstance(assertion, CombinedAssertion):
+        else:
             self._evaluate_assertion(element_id, assertion.left, rule)
             self._evaluate_assertion(element_id, assertion.right, rule)
 

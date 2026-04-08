@@ -11,6 +11,7 @@ from basic_framework.container_utils.abstract_container import AbstractContainer
 from basic_framework.conditions.condition_equals import ConditionEquals
 from bpmn_lib.database.instance.database_instance import DatabaseInstance
 from bpmn_lib.database.schema.column_definition import ColumnDefinition
+from bpmn_lib.database.schema.database_schema import DatabaseSchema
 from bpmn_lib.utils.validation_result import ValidationResult
 from basic_framework import MarkdownDocument, MarkdownFileAsTable
 # from archive.hierarchy_parser import HierarchyParser  # Unused - commented out
@@ -444,7 +445,7 @@ class BPMNHierarchyNavigator:
         """Prüft ob eine Tabelle ein Blatt ist."""
         return s_table_name in self.m_leaf_tables
 
-    def get_schema(self) -> "DatabaseSchema":
+    def get_schema(self) -> DatabaseSchema:
         """Returns the DatabaseSchema for schema validation and introspection."""
         return self.m_database.get_schema()
 
