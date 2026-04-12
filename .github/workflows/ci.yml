@@ -37,7 +37,7 @@ jobs:
   bump-version:
     needs: test
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'hennig-ai/bpmn-lib-private'
 
     permissions:
       contents: write
