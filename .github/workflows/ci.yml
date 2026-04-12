@@ -34,6 +34,11 @@ jobs:
         run: |
           pyright
 
+      - name: Security audit dependencies
+        run: |
+          pip install pip-audit
+          pip-audit
+
   bump-version:
     needs: test
     runs-on: ubuntu-latest
