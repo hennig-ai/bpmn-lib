@@ -12,20 +12,16 @@ bpmn-lib lets you load a BPMN process model from markdown-defined schemas and da
 - Resolve data associations (inputs/outputs)
 - Validate element type specificity and FK constraints
 
-## Dependencies
-
-This library requires [`basic-framework`](https://github.com/hennig-ai/basic-framework) (>=3.2.0, <3.3.0), a companion package from hennig-ai that provides core data structures and logging utilities.
-
 ## Installation
 
 ```bash
-pip install -e .
+pip install bpmn-lib
 ```
 
-Install with test dependencies:
+Install with dev dependencies (for development):
 
 ```bash
-pip install -e ".[test]"
+pip install -e ".[dev]"
 ```
 
 ## Quick Start
