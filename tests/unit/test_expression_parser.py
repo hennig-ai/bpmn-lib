@@ -4,10 +4,15 @@ import pytest
 
 from bpmn_lib.validation.expression_parser import ExpressionParser
 from bpmn_lib.validation.expression_ast import (
+    AttributeOperand,
     CombinedAssertion,
     CountAssertion,
+    ElementAssertion,
     ExistsAssertion,
     ForEachAssertion,
+    LiteralOperand,
+    ResolverOperand,
+    ValueListOperand,
     WhereEquals,
     WhereNotIn,
 )
@@ -49,9 +54,9 @@ class TestParseAssertionForEach:
         assert isinstance(result, ForEachAssertion)
         assert result.flow == "outgoing_flows"
         assert len(result.check.terms) == 1
-        assert result.check.terms[0].attribute_name == "condition_expression"
+        assert result.check.terms[0].left.name == "condition_expression"
         assert result.check.terms[0].operator == "!="
-        assert result.check.terms[0].value is None
+        assert result.check.terms[0].right.value is None
 
     def test_for_each_with_and_check(self):
         result = self.parser.parse_assertion("FOR_EACH outgoing_flows: condition_expression != null AND is_default == false")
@@ -69,8 +74,8 @@ class TestParseAssertionExists:
         result = self.parser.parse_assertion("EXISTS outgoing_flows: is_default == true")
         assert isinstance(result, ExistsAssertion)
         assert result.flow == "outgoing_flows"
-        assert result.check.terms[0].attribute_name == "is_default"
-        assert result.check.terms[0].value is True
+        assert result.check.terms[0].left.name == "is_default"
+        assert result.check.terms[0].right.value is True
 
 
 class TestParseAssertionCombined:
@@ -85,6 +90,82 @@ class TestParseAssertionCombined:
         assert isinstance(result, CombinedAssertion)
         assert isinstance(result.left, CountAssertion)
         assert isinstance(result.right, ForEachAssertion)
+
+
+class TestParseAssertionElement:
+    """Tests for ASSERT, resolver operands and IN / NOT IN."""
+
+    def setup_method(self):
+        self.parser = ExpressionParser()
+
+    def test_assert_with_two_resolvers(self):
+        result = self.parser.parse_assertion("ASSERT POOL_OF(source) != POOL_OF(target)")
+        assert isinstance(result, ElementAssertion)
+        term = result.check.terms[0]
+        assert term.left == ResolverOperand(function="POOL_OF", argument="source")
+        assert term.operator == "!="
+        assert term.right == ResolverOperand(function="POOL_OF", argument="target")
+
+    def test_assert_with_attribute_and_literal(self):
+        result = self.parser.parse_assertion("ASSERT message_definition_id != null")
+        term = result.check.terms[0]
+        assert term.left == AttributeOperand(name="message_definition_id")
+        assert term.right == LiteralOperand(value=None)
+
+    def test_assert_with_value_list(self):
+        result = self.parser.parse_assertion("ASSERT TYPE_OF(target) IN (pool, event, user_task)")
+        term = result.check.terms[0]
+        assert term.operator == "IN"
+        assert term.right == ValueListOperand(values=["pool", "event", "user_task"])
+
+    def test_assert_with_not_in(self):
+        result = self.parser.parse_assertion("ASSERT TYPE_OF(source) NOT IN (gateway, lane)")
+        assert result.check.terms[0].operator == "NOT IN"
+
+    def test_and_is_not_split_inside_a_value_list(self):
+        """Two IN terms combined with AND must stay two terms of one check."""
+        result = self.parser.parse_assertion(
+            "ASSERT TYPE_OF(source) IN (pool, event) AND TYPE_OF(target) IN (pool, event)"
+        )
+        assert result.check.combinator == "AND"
+        assert len(result.check.terms) == 2
+
+    def test_or_combinator_with_resolvers(self):
+        result = self.parser.parse_assertion(
+            "ASSERT POOL_COUNT() < 2 OR POOL_MESSAGE_FLOW_COUNT(self) >= 1"
+        )
+        assert result.check.combinator == "OR"
+        assert result.check.terms[0].left == ResolverOperand(function="POOL_COUNT", argument="")
+        assert result.check.terms[0].right == LiteralOperand(value=2)
+
+    def test_resolver_inside_for_each(self):
+        result = self.parser.parse_assertion(
+            "FOR_EACH incoming_message_flows: message_definition_id == EXPECTED_MESSAGE_OF(self)"
+        )
+        assert isinstance(result, ForEachAssertion)
+        assert result.check.terms[0].right == ResolverOperand(
+            function="EXPECTED_MESSAGE_OF", argument="self"
+        )
+
+    def test_unknown_resolver_raises(self):
+        with pytest.raises(ValueError):
+            self.parser.parse_assertion("ASSERT COLOUR_OF(target) == red")
+
+    def test_invalid_resolver_argument_raises(self):
+        with pytest.raises(ValueError):
+            self.parser.parse_assertion("ASSERT POOL_OF(neighbour) != null")
+
+    def test_argument_for_argless_resolver_raises(self):
+        with pytest.raises(ValueError):
+            self.parser.parse_assertion("ASSERT POOL_COUNT(self) < 2")
+
+    def test_in_without_value_list_raises(self):
+        with pytest.raises(ValueError):
+            self.parser.parse_assertion("ASSERT TYPE_OF(target) IN pool")
+
+    def test_assert_without_check_raises(self):
+        with pytest.raises(ValueError):
+            self.parser.parse_assertion("ASSERT")
 
 
 class TestParseValue:
@@ -110,6 +191,13 @@ class TestParseValue:
 
     def test_unquoted_text_returned_as_is(self):
         assert self.parser._parse_value("plain") == "plain"
+
+    def test_plain_number_becomes_int(self):
+        assert self.parser._parse_value("2") == 2
+
+    def test_zero_padded_number_stays_a_string(self):
+        """BPMN element IDs are zero-padded — '038' must not become 38."""
+        assert self.parser._parse_value("038") == "038"
 
 
 class TestParseAssertionErrors:

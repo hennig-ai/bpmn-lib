@@ -1,22 +1,35 @@
 """Recursive-descent parser for BPMN validation rule expressions."""
 
 import re
-from typing import Any, List
+from typing import Any, List, Tuple
 
 from basic_framework.proc_frame import log_and_raise
 
 from bpmn_lib.validation.expression_ast import (
     Assertion,
+    AttributeOperand,
     Check,
     CheckTerm,
     CombinedAssertion,
     CountAssertion,
+    ElementAssertion,
     ExistsAssertion,
     ForEachAssertion,
+    LiteralOperand,
+    Operand,
+    RESOLVER_ARGUMENTS,
+    RESOLVER_ARITY,
+    ResolverOperand,
+    ValueListOperand,
     WhereClause,
     WhereEquals,
     WhereNotIn,
 )
+
+# Longest match wins, so ">=" must precede ">" and "NOT IN" must precede "IN".
+_TERM_OPERATORS: List[str] = [" NOT IN ", " IN ", "==", "!=", ">=", "<=", ">", "<"]
+
+_VALID_OPERATORS = {"==", ">=", "<=", ">", "<", "!=", "IN", "NOT IN"}
 
 
 class ExpressionParser:
@@ -37,7 +50,11 @@ class ExpressionParser:
         return self._parse_single_assertion(text)
 
     def _split_top_level_and(self, text: str) -> List[str]:
-        """Split text on ' AND ' only at the top level (not inside FOR_EACH/EXISTS check)."""
+        """Split text on ' AND ' only at the top level (not inside FOR_EACH/EXISTS check).
+
+        ASSERT is deliberately not split here: its check already supports AND/OR
+        internally, so a top-level AND between two ASSERTs is never needed.
+        """
         # Only split on AND that separates two top-level assertion expressions
         # Pattern: look for AND between a closing assertion and opening assertion
         # COUNT(...) ... AND COUNT/FOR_EACH/EXISTS
@@ -69,6 +86,8 @@ class ExpressionParser:
             return self._parse_for_each_expr(text)
         if text.startswith("EXISTS "):
             return self._parse_exists_expr(text)
+        if text.startswith("ASSERT "):
+            return self._parse_element_expr(text)
 
         log_and_raise(ValueError(
             f"Unrecognized assertion syntax: '{text}'"
@@ -126,6 +145,18 @@ class ExpressionParser:
 
         return ExistsAssertion(flow=flow, check=check)
 
+    def _parse_element_expr(self, text: str) -> ElementAssertion:
+        """Parse ASSERT check — a check against the selected element itself."""
+        match = re.match(r'^ASSERT\s+(.+)$', text.strip())
+        if not match:
+            log_and_raise(ValueError(
+                f"Invalid ASSERT assertion syntax: '{text}'"
+            ))
+
+        check = self._parse_check(match.group(1).strip())
+
+        return ElementAssertion(check=check)
+
     def _parse_check(self, text: str) -> Check:
         """Parse one or more check terms with optional AND/OR combinator."""
         text = text.strip()
@@ -142,42 +173,135 @@ class ExpressionParser:
         return Check(terms=[term], combinator=None)
 
     def _split_check_on_combinator(self, text: str, combinator: str) -> List[str]:
-        """Split check text on combinator keyword."""
-        # Split on ' AND ' or ' OR ' as word boundaries
-        pattern = rf'\s+{combinator}\s+'
-        parts = re.split(pattern, text)
+        """Split check text on combinator keyword, ignoring parenthesised sections."""
+        return self._split_at_depth_zero(text, f" {combinator} ")
+
+    def _split_at_depth_zero(self, text: str, separator: str) -> List[str]:
+        """Split text on a separator that occurs outside of any parentheses.
+
+        Value lists like '(pool, event)' and resolver calls like 'POOL_OF(target)'
+        must never be split apart.
+        """
+        parts: List[str] = []
+        depth = 0
+        start = 0
+        index = 0
+
+        while index < len(text):
+            char = text[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif depth == 0 and text.startswith(separator, index):
+                parts.append(text[start:index])
+                index += len(separator)
+                start = index
+                continue
+            index += 1
+
+        parts.append(text[start:])
         return parts
 
     def _parse_check_term(self, text: str) -> CheckTerm:
-        """Parse attribute_name operator value."""
-        text = text.strip()
-
-        # Match: attribute_name operator value
-        match = re.match(r'^(\w+)\s*([><=!]+)\s*(.+)$', text)
-        if not match:
-            log_and_raise(ValueError(
-                f"Invalid check term syntax: '{text}'"
-            ))
-
-        attribute_name = match.group(1)
-        operator = match.group(2)
-        value_text = match.group(3).strip()
+        """Parse left_operand operator right_operand."""
+        left_text, operator, right_text = self._split_check_term(text.strip())
 
         self._validate_operator(operator, text)
-        value = self._parse_value(value_text)
 
-        return CheckTerm(attribute_name=attribute_name, operator=operator, value=value)
+        left = self._parse_operand(left_text, True)
+        right = self._parse_operand(right_text, False)
+
+        if operator in ("IN", "NOT IN") and not isinstance(right, ValueListOperand):
+            log_and_raise(ValueError(
+                f"Operator '{operator}' requires a parenthesised value list in: '{text}'"
+            ))
+
+        return CheckTerm(left=left, operator=operator, right=right)
+
+    def _split_check_term(self, text: str) -> Tuple[str, str, str]:
+        """Find the comparison operator outside parentheses and split around it."""
+        depth = 0
+        index = 0
+
+        while index < len(text):
+            char = text[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            elif depth == 0:
+                for operator in _TERM_OPERATORS:
+                    if text.startswith(operator, index):
+                        left = text[:index].strip()
+                        right = text[index + len(operator):].strip()
+                        return left, operator.strip(), right
+            index += 1
+
+        log_and_raise(ValueError(
+            f"Invalid check term syntax: '{text}'"
+        ))
+
+    def _parse_operand(self, text: str, is_left: bool) -> Operand:
+        """Convert operand text into a typed operand.
+
+        A bare word is an attribute reference on the left and a literal on the
+        right — this keeps the original 'attribute operator value' rules valid.
+        """
+        text = text.strip()
+
+        # Resolver call, e.g. POOL_OF(target) or POOL_COUNT()
+        match = re.match(r'^([A-Z][A-Z0-9_]*)\s*\((.*)\)$', text)
+        if match:
+            return self._build_resolver(match.group(1), match.group(2).strip(), text)
+
+        # Parenthesised value list, e.g. (pool, event)
+        if text.startswith("(") and text.endswith(")"):
+            values = [self._parse_value(part.strip()) for part in text[1:-1].split(",")]
+            return ValueListOperand(values=values)
+
+        if is_left and re.match(r'^[a-z_][a-z0-9_]*$', text):
+            return AttributeOperand(name=text)
+
+        return LiteralOperand(value=self._parse_value(text))
+
+    def _build_resolver(self, function: str, argument: str, context: str) -> ResolverOperand:
+        """Validate a resolver call against the known resolvers and build the operand."""
+        if function not in RESOLVER_ARITY:
+            log_and_raise(ValueError(
+                f"Unknown resolver function '{function}' in: '{context}'. "
+                f"Known resolvers: {sorted(RESOLVER_ARITY.keys())}"
+            ))
+
+        expected_arity = RESOLVER_ARITY[function]
+
+        if expected_arity == 0:
+            if argument:
+                log_and_raise(ValueError(
+                    f"Resolver '{function}' takes no argument, got '{argument}' in: '{context}'"
+                ))
+        elif argument not in RESOLVER_ARGUMENTS:
+            log_and_raise(ValueError(
+                f"Invalid resolver argument '{argument}' in: '{context}'. "
+                f"Allowed: {RESOLVER_ARGUMENTS}"
+            ))
+
+        return ResolverOperand(function=function, argument=argument)
 
     def _validate_operator(self, operator: str, context: str) -> None:
         """Validate that operator is one of the recognized operators."""
-        valid_operators = {"==", ">=", "<=", ">", "<", "!="}
-        if operator not in valid_operators:
+        if operator not in _VALID_OPERATORS:
             log_and_raise(ValueError(
                 f"Invalid operator '{operator}' in: '{context}'"
             ))
 
     def _parse_value(self, text: str) -> Any:
-        """Convert value text to typed Python value."""
+        """Convert value text to typed Python value.
+
+        A digit sequence with a leading zero stays a string: BPMN element IDs are
+        zero-padded ('038') and must not silently turn into the number 38. Quote a
+        literal whenever it is an ID rather than a count.
+        """
         text = text.strip()
 
         if text == "null":
@@ -186,6 +310,10 @@ class ExpressionParser:
             return True
         if text == "false":
             return False
+
+        # Integer literal — needed for resolvers that return counts
+        if re.match(r'^-?(0|[1-9]\d*)$', text):
+            return int(text)
 
         # Quoted string
         if (text.startswith('"') and text.endswith('"')) or \

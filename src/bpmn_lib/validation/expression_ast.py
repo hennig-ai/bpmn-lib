@@ -3,7 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
+
+# Resolver functions usable inside check terms: name -> number of arguments (0 or 1).
+# The parser validates against this table, the rule engine implements the lookups.
+RESOLVER_ARITY: Dict[str, int] = {
+    "POOL_OF": 1,
+    "TYPE_OF": 1,
+    "EXPECTED_MESSAGE_OF": 1,
+    "POOL_MESSAGE_FLOW_COUNT": 1,
+    "POOL_COUNT": 0,
+}
+
+# Element references accepted as a resolver argument.
+RESOLVER_ARGUMENTS: List[str] = ["self", "source", "target"]
 
 
 @dataclass(frozen=True)
@@ -16,12 +29,48 @@ class CountAssertion:
 
 
 @dataclass(frozen=True)
-class CheckTerm:
-    """Single comparison: attribute_name operator value."""
+class AttributeOperand:
+    """Reference to an attribute of the current flow info or element."""
 
-    attribute_name: str
-    operator: str
+    name: str
+
+
+@dataclass(frozen=True)
+class LiteralOperand:
+    """A constant value: string, number, boolean or null."""
+
     value: Any
+
+
+@dataclass(frozen=True)
+class ValueListOperand:
+    """A parenthesised list of literals, used as right operand of IN / NOT IN."""
+
+    values: List[Any]
+
+
+@dataclass(frozen=True)
+class ResolverOperand:
+    """Call of a resolver function, e.g. POOL_OF(target) or POOL_COUNT().
+
+    The argument names the element the resolver applies to: 'self', 'source',
+    'target' — or the empty string for resolvers that take no argument.
+    """
+
+    function: str
+    argument: str
+
+
+Operand = Union[AttributeOperand, LiteralOperand, ValueListOperand, ResolverOperand]
+
+
+@dataclass(frozen=True)
+class CheckTerm:
+    """Single comparison: left operator right."""
+
+    left: Operand
+    operator: str
+    right: Operand
 
 
 @dataclass(frozen=True)
@@ -49,6 +98,18 @@ class ExistsAssertion:
 
 
 @dataclass(frozen=True)
+class ElementAssertion:
+    """ASSERT check — the check is evaluated against the selected element itself.
+
+    Unlike COUNT/FOR_EACH/EXISTS this assertion does not iterate over flows. It is
+    the only way to state something about the selected element, which is what rules
+    on connecting elements (message flows) need.
+    """
+
+    check: Check
+
+
+@dataclass(frozen=True)
 class CombinedAssertion:
     """Two assertions combined with AND."""
 
@@ -56,7 +117,9 @@ class CombinedAssertion:
     right: Assertion
 
 
-Assertion = Union[CountAssertion, ForEachAssertion, ExistsAssertion, CombinedAssertion]
+Assertion = Union[
+    CountAssertion, ForEachAssertion, ExistsAssertion, ElementAssertion, CombinedAssertion
+]
 
 
 @dataclass(frozen=True)

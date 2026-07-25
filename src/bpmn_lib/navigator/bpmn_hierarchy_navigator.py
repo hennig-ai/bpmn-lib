@@ -81,6 +81,15 @@ class MessageDefinitionInfo:
     item_id: Optional[str]
 
 
+@dataclass(frozen=True)
+class MessageEventDefinitionInfo:
+    """Informationen zu einer message_event_definition eines Events."""
+
+    message_event_definition_id: str
+    message_definition_id: Optional[str]
+    operation_id: Optional[str]
+
+
 class BPMNHierarchyNavigator:
     """Zentrale Klasse für die Navigation und Verwaltung der BPMN-Element-Hierarchie."""
 
@@ -850,6 +859,53 @@ class BPMNHierarchyNavigator:
             item_id=iterator.value("item_id"),
         )
 
+    def get_message_event_definitions(self, bpmn_element_id: Union[str, int]) -> List[MessageEventDefinitionInfo]:
+        """
+        Gibt die message_event_definition-Saetze eines Events zurueck.
+
+        Laut Schema ist event_id in message_event_definition UNIQUE, es existiert also
+        hoechstens ein Satz. Die Rueckgabe als Liste erlaubt es der Rule Engine,
+        Vorhandensein und Fehlen einheitlich ueber COUNT(...) zu pruefen.
+
+        Args:
+            bpmn_element_id: bpmn_element_id eines Events (int oder str).
+                             Bei int wird automatisch auf 3 Stellen formatiert
+
+        Returns:
+            Liste mit 0 oder 1 MessageEventDefinitionInfo
+
+        Raises:
+            ValueError: Wenn das Element kein Event ist
+        """
+        s_bpmn_element_id = self._format_db_internal_id(bpmn_element_id)
+
+        # event_id ueber die Hierarchie ermitteln (bpmn_element -> event)
+        s_event_id = self._get_record_id_in_table(s_bpmn_element_id, TBL_EVENT)
+
+        if s_event_id == "":
+            log_and_raise(ValueError(
+                f"Element '{s_bpmn_element_id}' ist kein Event - "
+                f"message_event_definition nicht ermittelbar"
+            ))
+
+        # get_table() raises via log_and_raise() if table doesn't exist
+        definition_table = self.m_database.get_table(TBL_MESSAGE_EVENT_DEFINITION)
+
+        condition = ConditionEquals("event_id", s_event_id)
+        iterator = definition_table.create_iterator(True, condition)
+
+        definitions: List[MessageEventDefinitionInfo] = []
+        while not iterator.is_empty():
+            definition_info = MessageEventDefinitionInfo(
+                message_event_definition_id=iterator.value("message_event_definition_id"),
+                message_definition_id=iterator.value("message_definition_id"),
+                operation_id=iterator.value("operation_id"),
+            )
+            definitions.append(definition_info)
+            iterator.pp()
+
+        return definitions
+
     def get_message_definition_for_event(self, bpmn_element_id: Union[str, int]) -> Optional[MessageDefinitionInfo]:
         """
         Gibt den Nachrichtentyp zurueck, auf den ein Message Event verweist.
@@ -872,28 +928,13 @@ class BPMNHierarchyNavigator:
             ValueError: Wenn das Element kein Event ist oder eine referenzierte
                         message_definition nicht existiert
         """
-        s_bpmn_element_id = self._format_db_internal_id(bpmn_element_id)
-
-        # event_id ueber die Hierarchie ermitteln (bpmn_element -> event)
-        s_event_id = self._get_record_id_in_table(s_bpmn_element_id, TBL_EVENT)
-
-        if s_event_id == "":
-            log_and_raise(ValueError(
-                f"Element '{s_bpmn_element_id}' ist kein Event - "
-                f"Message Definition nicht ermittelbar"
-            ))
-
-        # get_table() raises via log_and_raise() if table doesn't exist
-        definition_table = self.m_database.get_table(TBL_MESSAGE_EVENT_DEFINITION)
-
-        condition = ConditionEquals("event_id", s_event_id)
-        iterator = definition_table.create_iterator(True, condition)
+        definitions = self.get_message_event_definitions(bpmn_element_id)
 
         # Event ohne message_event_definition (z.B. Timer- oder Signal-Event)
-        if iterator.is_empty():
+        if len(definitions) == 0:
             return None
 
-        s_message_definition_id = iterator.value("message_definition_id")
+        s_message_definition_id = definitions[0].message_definition_id
 
         # message_definition_id ist laut Schema optional
         if s_message_definition_id is None or str(s_message_definition_id).strip() == "":

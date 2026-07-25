@@ -7,6 +7,7 @@ from bpmn_lib.navigator.bpmn_hierarchy_navigator import (
     IncomingMessageFlowInfo,
     OutgoingMessageFlowInfo,
     MessageDefinitionInfo,
+    MessageEventDefinitionInfo,
 )
 from bpmn_lib.navigator.navigator_factory import create_navigator
 
@@ -17,5 +18,6 @@ __all__ = [
     "IncomingMessageFlowInfo",
     "OutgoingMessageFlowInfo",
     "MessageDefinitionInfo",
+    "MessageEventDefinitionInfo",
     "create_navigator",
 ]

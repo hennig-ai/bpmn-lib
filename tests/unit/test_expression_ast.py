@@ -5,7 +5,9 @@ import pytest
 from bpmn_lib.validation.expression_ast import (
     Assertion,
     Check,
+    AttributeOperand,
     CheckTerm,
+    LiteralOperand,
     CombinedAssertion,
     CountAssertion,
     ExistsAssertion,
@@ -34,25 +36,25 @@ class TestForEachAssertion:
 
     def test_create_nested(self):
         check = Check(
-            terms=[CheckTerm(attribute_name="condition_expression", operator="!=", value=None)],
+            terms=[CheckTerm(left=AttributeOperand(name="condition_expression"), operator="!=", right=LiteralOperand(value=None))],
             combinator=None,
         )
         fa = ForEachAssertion(flow="outgoing_flows", check=check)
         assert fa.flow == "outgoing_flows"
         assert len(fa.check.terms) == 1
-        assert fa.check.terms[0].attribute_name == "condition_expression"
+        assert fa.check.terms[0].left.name == "condition_expression"
 
 
 class TestExistsAssertion:
 
     def test_create(self):
         check = Check(
-            terms=[CheckTerm(attribute_name="is_default", operator="==", value=True)],
+            terms=[CheckTerm(left=AttributeOperand(name="is_default"), operator="==", right=LiteralOperand(value=True))],
             combinator=None,
         )
         ea = ExistsAssertion(flow="outgoing_flows", check=check)
         assert ea.flow == "outgoing_flows"
-        assert ea.check.terms[0].value is True
+        assert ea.check.terms[0].right.value is True
 
 
 class TestCombinedAssertion:
@@ -68,19 +70,19 @@ class TestCombinedAssertion:
 class TestCheckTerm:
 
     def test_with_none_value(self):
-        ct = CheckTerm(attribute_name="condition_expression", operator="!=", value=None)
-        assert ct.value is None
+        ct = CheckTerm(left=AttributeOperand(name="condition_expression"), operator="!=", right=LiteralOperand(value=None))
+        assert ct.right.value is None
 
     def test_with_bool_value(self):
-        ct = CheckTerm(attribute_name="is_default", operator="==", value=True)
-        assert ct.value is True
+        ct = CheckTerm(left=AttributeOperand(name="is_default"), operator="==", right=LiteralOperand(value=True))
+        assert ct.right.value is True
 
 
 class TestCheck:
 
     def test_single_term_no_combinator(self):
         check = Check(
-            terms=[CheckTerm(attribute_name="a", operator="==", value="x")],
+            terms=[CheckTerm(left=AttributeOperand(name="a"), operator="==", right=LiteralOperand(value="x"))],
             combinator=None,
         )
         assert check.combinator is None
@@ -89,8 +91,8 @@ class TestCheck:
     def test_multiple_terms_with_and(self):
         check = Check(
             terms=[
-                CheckTerm(attribute_name="a", operator="==", value="x"),
-                CheckTerm(attribute_name="b", operator="!=", value=None),
+                CheckTerm(left=AttributeOperand(name="a"), operator="==", right=LiteralOperand(value="x")),
+                CheckTerm(left=AttributeOperand(name="b"), operator="!=", right=LiteralOperand(value=None)),
             ],
             combinator="AND",
         )

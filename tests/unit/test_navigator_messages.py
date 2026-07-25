@@ -16,6 +16,7 @@ from bpmn_lib.navigator.bpmn_hierarchy_navigator import (
     BPMNHierarchyNavigator,
     IncomingMessageFlowInfo,
     MessageDefinitionInfo,
+    MessageEventDefinitionInfo,
     OutgoingMessageFlowInfo,
 )
 
@@ -97,6 +98,7 @@ def _make_navigator(
         "get_outgoing_message_flows",
         "get_incoming_message_flows",
         "get_message_definition",
+        "get_message_event_definitions",
         "get_message_definition_for_event",
         "get_pool_of_element",
         "_get_pool_via_lane",
@@ -229,6 +231,49 @@ class TestGetMessageDefinition:
 
         with pytest.raises(Exception):
             navigator.get_message_definition("999")
+
+
+class TestGetMessageEventDefinitions:
+    """Test get_message_event_definitions."""
+
+    def _navigator(self, med_rows: List[Dict[str, Any]]) -> BPMNHierarchyNavigator:
+        return _make_navigator(
+            tables={"message_event_definition": med_rows},
+            event_ids={"002": "002"},
+        )
+
+    def test_returns_the_single_definition(self):
+        navigator = self._navigator([
+            {"message_event_definition_id": "001", "event_id": "002",
+             "message_definition_id": "001", "operation_id": None},
+        ])
+
+        assert navigator.get_message_event_definitions("002") == [
+            MessageEventDefinitionInfo(
+                message_event_definition_id="001",
+                message_definition_id="001",
+                operation_id=None,
+            )
+        ]
+
+    def test_event_without_definition_returns_empty_list(self):
+        """Distinguishing 'no row' from 'row without message type' is what the rules need."""
+        assert self._navigator([]).get_message_event_definitions("002") == []
+
+    def test_definition_without_message_reference_is_still_returned(self):
+        navigator = self._navigator([
+            {"message_event_definition_id": "001", "event_id": "002",
+             "message_definition_id": None, "operation_id": None},
+        ])
+
+        result = navigator.get_message_event_definitions("002")
+
+        assert len(result) == 1
+        assert result[0].message_definition_id is None
+
+    def test_non_event_element_raises(self):
+        with pytest.raises(Exception):
+            self._navigator([]).get_message_event_definitions("003")
 
 
 class TestGetMessageDefinitionForEvent:
