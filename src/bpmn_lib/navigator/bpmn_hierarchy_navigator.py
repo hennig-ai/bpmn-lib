@@ -20,7 +20,17 @@ from bpmn_lib.navigator.bpmn_constants import (
     TBL_TASK,
     TBL_EVENT,
     TBL_GATEWAY,
+    TBL_BPMN_ELEMENT,
+    TBL_PROCESS_ELEMENT,
+    TBL_BPMN_PROCESS,
+    TBL_SEQUENCE_FLOW,
+    TBL_MESSAGE_FLOW,
     TBL_DATA_ASSOCIATION,
+    TBL_POOL,
+    TBL_LANE,
+    TBL_LANE_ELEMENT,
+    TBL_MESSAGE_DEFINITION,
+    TBL_MESSAGE_EVENT_DEFINITION,
 )
 
 
@@ -44,10 +54,37 @@ class IncomingSequenceFlowInfo:
     is_default: Optional[bool]
 
 
+@dataclass(frozen=True)
+class OutgoingMessageFlowInfo:
+    """Informationen zu einem ausgehenden Message Flow."""
+
+    message_flow_id: str
+    target_element_id: str
+    message_definition_id: Optional[str]
+
+
+@dataclass(frozen=True)
+class IncomingMessageFlowInfo:
+    """Informationen zu einem eingehenden Message Flow."""
+
+    message_flow_id: str
+    source_element_id: str
+    message_definition_id: Optional[str]
+
+
+@dataclass(frozen=True)
+class MessageDefinitionInfo:
+    """Informationen zu einer Message Definition (Nachrichtentyp)."""
+
+    message_definition_id: str
+    name: str
+    item_id: Optional[str]
+
+
 class BPMNHierarchyNavigator:
     """Zentrale Klasse für die Navigation und Verwaltung der BPMN-Element-Hierarchie."""
 
-    _FLOW_OBJECT_TABLES: List[str] = ["activity", "event", "gateway"]
+    _FLOW_OBJECT_TABLES: List[str] = [TBL_ACTIVITY, TBL_EVENT, TBL_GATEWAY]
 
     #def __init__(self):
     def __init__(self, val_result: ValidationResult, database: DatabaseInstance, hierarchy_doc: MarkdownDocument):
@@ -299,7 +336,7 @@ class BPMNHierarchyNavigator:
         """Verarbeitet die Root-Tabelle (bpmn_element) direkt."""
         # Alle Elemente aus bpmn_element als Basis nehmen
         # get_table() raises via log_and_raise() if table doesn't exist
-        o_bpmn_element_table = self.m_database.get_table("bpmn_element")
+        o_bpmn_element_table = self.m_database.get_table(TBL_BPMN_ELEMENT)
 
         # Durch alle Elemente iterieren
         o_iterator = o_bpmn_element_table.create_iterator()
@@ -414,7 +451,7 @@ class BPMNHierarchyNavigator:
         """Baut das Process-Element Mapping auf."""
         # process_element Tabelle abrufen
         # get_table() raises via log_and_raise() if table doesn't exist
-        o_process_element_table = self.m_database.get_table("process_element")
+        o_process_element_table = self.m_database.get_table(TBL_PROCESS_ELEMENT)
 
         # Durch alle Einträge iterieren
         o_iterator = o_process_element_table.create_iterator()
@@ -472,7 +509,7 @@ class BPMNHierarchyNavigator:
         """
         s_process_id = self._format_db_internal_id(process_id)
 
-        iterator = self.m_database.get_by_primary_key("bpmn_process", s_process_id)
+        iterator = self.m_database.get_by_primary_key(TBL_BPMN_PROCESS, s_process_id)
 
         if iterator is None:
             log_and_raise(ValueError(f"Prozess '{s_process_id}' nicht gefunden"))
@@ -552,7 +589,7 @@ class BPMNHierarchyNavigator:
             Exception: Wenn sequence_flow Tabelle nicht verfügbar ist
         """
         # get_table() raises via log_and_raise() if table doesn't exist
-        sequence_flow_table = self.m_database.get_table("sequence_flow")
+        sequence_flow_table = self.m_database.get_table(TBL_SEQUENCE_FLOW)
 
         # Filter auf source_bpmn_element_id
         condition = ConditionEquals("source_bpmn_element_id", bpmn_element_id)
@@ -594,7 +631,7 @@ class BPMNHierarchyNavigator:
         """
         bpmn_element_id = self._format_db_internal_id(bpmn_element_id)
         # get_table() raises via log_and_raise() if table doesn't exist
-        sequence_flow_table = self.m_database.get_table("sequence_flow")
+        sequence_flow_table = self.m_database.get_table(TBL_SEQUENCE_FLOW)
 
         # Filter auf source_bpmn_element_id
         condition = ConditionEquals("source_bpmn_element_id", bpmn_element_id)
@@ -639,7 +676,7 @@ class BPMNHierarchyNavigator:
         """
         bpmn_element_id = self._format_db_internal_id(bpmn_element_id)
         # get_table() raises via log_and_raise() if table doesn't exist
-        sequence_flow_table = self.m_database.get_table("sequence_flow")
+        sequence_flow_table = self.m_database.get_table(TBL_SEQUENCE_FLOW)
 
         # Filter auf target_bpmn_element_id
         condition = ConditionEquals("target_bpmn_element_id", bpmn_element_id)
@@ -679,7 +716,7 @@ class BPMNHierarchyNavigator:
             Exception: Wenn sequence_flow Tabelle nicht verfuegbar ist
         """
         # get_table() raises via log_and_raise() if table doesn't exist
-        sequence_flow_table = self.m_database.get_table("sequence_flow")
+        sequence_flow_table = self.m_database.get_table(TBL_SEQUENCE_FLOW)
 
         # Filter auf target_bpmn_element_id
         condition = ConditionEquals("target_bpmn_element_id", bpmn_element_id)
@@ -697,6 +734,262 @@ class BPMNHierarchyNavigator:
             return None
 
         return source_ids
+
+    def get_outgoing_message_flows(self, bpmn_element_id: Union[str, int]) -> List[OutgoingMessageFlowInfo]:
+        """
+        Gibt alle ausgehenden Message Flows eines Elements zurueck.
+
+        Durchsucht die message_flow Tabelle nach allen Flows, die vom gegebenen
+        Element ausgehen (source_bpmn_element_id). Quelle eines Message Flows kann
+        laut BPMN-Schema sowohl ein Flow-Objekt als auch ein Pool selbst sein.
+
+        Args:
+            bpmn_element_id: ID des sendenden Elements (int oder str).
+                             Bei int wird automatisch auf 3 Stellen formatiert (1 -> "001")
+
+        Returns:
+            Liste von OutgoingMessageFlowInfo mit:
+            - message_flow_id: bpmn_element_id des Message Flows
+            - target_element_id: ID des empfangenden Elements
+            - message_definition_id: Referenz auf den Nachrichtentyp (kann None sein)
+            Leere Liste wenn keine ausgehenden Message Flows vorhanden sind
+
+        Raises:
+            Exception: Wenn message_flow Tabelle nicht verfuegbar ist
+        """
+        s_bpmn_element_id = self._format_db_internal_id(bpmn_element_id)
+        # get_table() raises via log_and_raise() if table doesn't exist
+        message_flow_table = self.m_database.get_table(TBL_MESSAGE_FLOW)
+
+        # Filter auf source_bpmn_element_id
+        condition = ConditionEquals("source_bpmn_element_id", s_bpmn_element_id)
+        iterator = message_flow_table.create_iterator(True, condition)
+
+        # Flow-Daten sammeln
+        outgoing_flows: List[OutgoingMessageFlowInfo] = []
+        while not iterator.is_empty():
+            flow_info = OutgoingMessageFlowInfo(
+                message_flow_id=iterator.value("bpmn_element_id"),
+                target_element_id=iterator.value("target_bpmn_element_id"),
+                message_definition_id=iterator.value("message_definition_id"),
+            )
+            outgoing_flows.append(flow_info)
+            iterator.pp()
+
+        return outgoing_flows
+
+    def get_incoming_message_flows(self, bpmn_element_id: Union[str, int]) -> List[IncomingMessageFlowInfo]:
+        """
+        Gibt alle eingehenden Message Flows eines Elements zurueck.
+
+        Durchsucht die message_flow Tabelle nach allen Flows, die zum gegebenen
+        Element hinfuehren (target_bpmn_element_id). Ziel eines Message Flows kann
+        laut BPMN-Schema sowohl ein Flow-Objekt als auch ein Pool selbst sein.
+
+        Args:
+            bpmn_element_id: ID des empfangenden Elements (int oder str).
+                             Bei int wird automatisch auf 3 Stellen formatiert (1 -> "001")
+
+        Returns:
+            Liste von IncomingMessageFlowInfo mit:
+            - message_flow_id: bpmn_element_id des Message Flows
+            - source_element_id: ID des sendenden Elements
+            - message_definition_id: Referenz auf den Nachrichtentyp (kann None sein)
+            Leere Liste wenn keine eingehenden Message Flows vorhanden sind
+
+        Raises:
+            Exception: Wenn message_flow Tabelle nicht verfuegbar ist
+        """
+        s_bpmn_element_id = self._format_db_internal_id(bpmn_element_id)
+        # get_table() raises via log_and_raise() if table doesn't exist
+        message_flow_table = self.m_database.get_table(TBL_MESSAGE_FLOW)
+
+        # Filter auf target_bpmn_element_id
+        condition = ConditionEquals("target_bpmn_element_id", s_bpmn_element_id)
+        iterator = message_flow_table.create_iterator(True, condition)
+
+        # Flow-Daten sammeln
+        incoming_flows: List[IncomingMessageFlowInfo] = []
+        while not iterator.is_empty():
+            flow_info = IncomingMessageFlowInfo(
+                message_flow_id=iterator.value("bpmn_element_id"),
+                source_element_id=iterator.value("source_bpmn_element_id"),
+                message_definition_id=iterator.value("message_definition_id"),
+            )
+            incoming_flows.append(flow_info)
+            iterator.pp()
+
+        return incoming_flows
+
+    def get_message_definition(self, message_definition_id: Union[str, int]) -> MessageDefinitionInfo:
+        """
+        Gibt den Nachrichtentyp zu einer message_definition_id zurueck.
+
+        Args:
+            message_definition_id: PK der message_definition (int oder str).
+                                   Bei int wird automatisch auf 3 Stellen formatiert
+
+        Returns:
+            MessageDefinitionInfo mit message_definition_id, name und item_id
+
+        Raises:
+            ValueError: Wenn die message_definition nicht existiert
+        """
+        s_message_definition_id = self._format_db_internal_id(message_definition_id)
+
+        iterator = self.m_database.get_by_primary_key(TBL_MESSAGE_DEFINITION, s_message_definition_id)
+
+        if iterator is None:
+            log_and_raise(ValueError(
+                f"message_definition '{s_message_definition_id}' nicht gefunden"
+            ))
+
+        return MessageDefinitionInfo(
+            message_definition_id=s_message_definition_id,
+            name=iterator.value("name"),
+            item_id=iterator.value("item_id"),
+        )
+
+    def get_message_definition_for_event(self, bpmn_element_id: Union[str, int]) -> Optional[MessageDefinitionInfo]:
+        """
+        Gibt den Nachrichtentyp zurueck, auf den ein Message Event verweist.
+
+        Loest die Kette event -> message_event_definition -> message_definition auf.
+        Diese Kette ist ueber get_element_attribute() NICHT erreichbar: die Tabelle
+        message_event_definition haengt an event.event_id und ist bewusst nicht Teil
+        der bpmn_element-Hierarchie.
+
+        Args:
+            bpmn_element_id: bpmn_element_id eines Events (int oder str).
+                             Bei int wird automatisch auf 3 Stellen formatiert
+
+        Returns:
+            MessageDefinitionInfo des referenzierten Nachrichtentyps.
+            None wenn das Event keine message_event_definition besitzt (z.B. Timer-Event)
+            oder die vorhandene Definition keinen Nachrichtentyp referenziert.
+
+        Raises:
+            ValueError: Wenn das Element kein Event ist oder eine referenzierte
+                        message_definition nicht existiert
+        """
+        s_bpmn_element_id = self._format_db_internal_id(bpmn_element_id)
+
+        # event_id ueber die Hierarchie ermitteln (bpmn_element -> event)
+        s_event_id = self._get_record_id_in_table(s_bpmn_element_id, TBL_EVENT)
+
+        if s_event_id == "":
+            log_and_raise(ValueError(
+                f"Element '{s_bpmn_element_id}' ist kein Event - "
+                f"Message Definition nicht ermittelbar"
+            ))
+
+        # get_table() raises via log_and_raise() if table doesn't exist
+        definition_table = self.m_database.get_table(TBL_MESSAGE_EVENT_DEFINITION)
+
+        condition = ConditionEquals("event_id", s_event_id)
+        iterator = definition_table.create_iterator(True, condition)
+
+        # Event ohne message_event_definition (z.B. Timer- oder Signal-Event)
+        if iterator.is_empty():
+            return None
+
+        s_message_definition_id = iterator.value("message_definition_id")
+
+        # message_definition_id ist laut Schema optional
+        if s_message_definition_id is None or str(s_message_definition_id).strip() == "":
+            return None
+
+        return self.get_message_definition(s_message_definition_id)
+
+    def get_pool_of_element(self, bpmn_element_id: Union[str, int]) -> Optional[str]:
+        """
+        Gibt die bpmn_element_id des Pools zurueck, zu dem ein Element gehoert.
+
+        Ein Element gehoert laut BPMN-Schema zu einem Pool, wenn es
+        1. selbst der Pool ist (Pool als Sender/Empfaenger eines Message Flows),
+        2. einer Lane dieses Pools zugeordnet ist (ueber lane_element), oder
+        3. zu dem Prozess gehoert, den der Pool referenziert.
+
+        Die Pruefung erfolgt in dieser Reihenfolge; das erste Ergebnis gewinnt.
+        Diese Methode ist die Grundlage fuer die Regel, dass Message Flows nur
+        zwischen verschiedenen Pools verlaufen duerfen.
+
+        Args:
+            bpmn_element_id: ID des Elements (int oder str).
+                             Bei int wird automatisch auf 3 Stellen formatiert
+
+        Returns:
+            bpmn_element_id des Pools.
+            None wenn das Element keinem Pool zugeordnet werden kann
+            (z.B. Modelle ohne Pools)
+
+        Raises:
+            ValueError: Wenn eine in lane_element referenzierte Lane fehlt
+        """
+        s_bpmn_element_id = self._format_db_internal_id(bpmn_element_id)
+
+        # 1. Element ist selbst ein Pool
+        if self.is_element_descendant_of(s_bpmn_element_id, TBL_POOL):
+            return s_bpmn_element_id
+
+        # 2. Zugehoerigkeit ueber eine Lane
+        s_pool_id = self._get_pool_via_lane(s_bpmn_element_id)
+        if s_pool_id != "":
+            return s_pool_id
+
+        # 3. Zugehoerigkeit ueber den Prozess
+        s_pool_id = self._get_pool_via_process(s_bpmn_element_id)
+        if s_pool_id != "":
+            return s_pool_id
+
+        return None
+
+    def _get_pool_via_lane(self, s_bpmn_element_id: str) -> str:
+        """Ermittelt den Pool eines Elements ueber dessen Lane-Zuordnung."""
+        # get_table() raises via log_and_raise() if table doesn't exist
+        lane_element_table = self.m_database.get_table(TBL_LANE_ELEMENT)
+
+        condition = ConditionEquals("bpmn_element_id", s_bpmn_element_id)
+        iterator = lane_element_table.create_iterator(True, condition)
+
+        if iterator.is_empty():
+            return ""
+
+        s_lane_bpmn_element_id = iterator.value("lane_bpmn_element_id")
+
+        lane_table = self.m_database.get_table(TBL_LANE)
+        lane_condition = ConditionEquals("bpmn_element_id", s_lane_bpmn_element_id)
+        lane_iterator = lane_table.create_iterator(True, lane_condition)
+
+        if lane_iterator.is_empty():
+            log_and_raise(ValueError(
+                f"Lane '{s_lane_bpmn_element_id}' aus lane_element nicht in Tabelle 'lane' gefunden"
+            ))
+
+        # lane.pool_id referenziert pool.bpmn_element_id (nicht pool.pool_id)
+        return lane_iterator.value("pool_id")
+
+    def _get_pool_via_process(self, s_bpmn_element_id: str) -> str:
+        """Ermittelt den Pool eines Elements ueber den Prozess, dem es angehoert."""
+        # get_table() raises via log_and_raise() if table doesn't exist
+        process_element_table = self.m_database.get_table(TBL_PROCESS_ELEMENT)
+
+        condition = ConditionEquals("bpmn_element_id", s_bpmn_element_id)
+        iterator = process_element_table.create_iterator(True, condition)
+
+        if iterator.is_empty():
+            return ""
+
+        s_bpmn_process_id = iterator.value("bpmn_process_id")
+
+        pool_table = self.m_database.get_table(TBL_POOL)
+        pool_condition = ConditionEquals("bpmn_process_id", s_bpmn_process_id)
+        pool_iterator = pool_table.create_iterator(True, pool_condition)
+
+        if pool_iterator.is_empty():
+            return ""
+
+        return pool_iterator.value("bpmn_element_id")
 
     def get_data_inputs(self, bpmn_element_id: Union[str, int]) -> Optional[List[str]]:
         """
@@ -1030,7 +1323,7 @@ class BPMNHierarchyNavigator:
         # log_msg("Starte Validierung der element_type Spezifität...")
 
         # Hole bpmn_element Tabelle
-        o_bpmn_element_table = self.get_table("bpmn_element")
+        o_bpmn_element_table = self.get_table(TBL_BPMN_ELEMENT)
 
         # Iterator für alle bpmn_element Datensätze erstellen
         o_it = o_bpmn_element_table.create_iterator()
@@ -1084,7 +1377,7 @@ class BPMNHierarchyNavigator:
 
 
         # Hierarchie-Pfad ermitteln
-        o_path = self._get_hierarchy_path("bpmn_element", s_element_type)
+        o_path = self._get_hierarchy_path(TBL_BPMN_ELEMENT, s_element_type)
 
         if o_path is None or len(o_path) == 0:
             s_error_message = f"Validierungsfehler für bpmn_element_id={s_bpmn_element_id}: " \
@@ -1207,7 +1500,7 @@ class BPMNHierarchyNavigator:
     def _get_record_id_in_table(self, s_bpmn_element_id: str, s_table_name: str) -> str:
         """Ermittelt die ID eines Datensatzes in einer bestimmten Tabelle."""
         # Pfad von bpmn_element zur Zieltabelle ermitteln
-        o_path = self._get_hierarchy_path("bpmn_element", s_table_name)
+        o_path = self._get_hierarchy_path(TBL_BPMN_ELEMENT, s_table_name)
 
         if o_path is None:
             return ""
@@ -1366,7 +1659,7 @@ class BPMNHierarchyNavigator:
     def _build_path_string(self, s_bpmn_element_id: str, s_element_type: str) -> str:
         """Erstellt einen Pfad-String für Fehlermeldungen."""
         # Pfad ermitteln
-        o_path = self._get_hierarchy_path("bpmn_element", s_element_type)
+        o_path = self._get_hierarchy_path(TBL_BPMN_ELEMENT, s_element_type)
 
         # String aufbauen
         s_path = f"bpmn_element(id={s_bpmn_element_id}, element_type='{s_element_type}')"
@@ -1399,8 +1692,8 @@ class BPMNHierarchyNavigator:
         Returns:
             Element-ID oder None wenn nicht gefunden
         """
-        bpmn_element_table = self.m_database.get_table("bpmn_element")
-        process_element_table = self.m_database.get_table("process_element")
+        bpmn_element_table = self.m_database.get_table(TBL_BPMN_ELEMENT)
+        process_element_table = self.m_database.get_table(TBL_PROCESS_ELEMENT)
 
         # Nach name in bpmn_element filtern
         name_condition = ConditionEquals("name", name)
