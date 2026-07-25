@@ -9,8 +9,10 @@ from bpmn_lib.validation.expression_ast import (
     CountAssertion,
     ElementAssertion,
     ExistsAssertion,
+    FlowSet,
     ForEachAssertion,
     LiteralOperand,
+    MemberSet,
     ResolverOperand,
     ValueListOperand,
     WhereEquals,
@@ -26,14 +28,17 @@ class TestParseAssertionCount:
     def test_count_single_flow(self):
         result = self.parser.parse_assertion("COUNT(outgoing_flows) >= 1")
         assert isinstance(result, CountAssertion)
-        assert result.flows == ["outgoing_flows"]
+        assert result.item_sets == [FlowSet(name="outgoing_flows")]
         assert result.operator == ">="
         assert result.number == 1
 
     def test_count_combined_flows(self):
         result = self.parser.parse_assertion("COUNT(incoming_flows) + COUNT(outgoing_flows) >= 2")
         assert isinstance(result, CountAssertion)
-        assert result.flows == ["incoming_flows", "outgoing_flows"]
+        assert result.item_sets == [
+            FlowSet(name="incoming_flows"),
+            FlowSet(name="outgoing_flows"),
+        ]
         assert result.operator == ">="
         assert result.number == 2
 
@@ -42,6 +47,48 @@ class TestParseAssertionCount:
         assert isinstance(result, CountAssertion)
         assert result.operator == "=="
         assert result.number == 0
+
+    def test_unknown_flow_set_is_rejected_at_parse_time(self):
+        """A misspelled flow set must fail while loading, not silently count nothing."""
+        with pytest.raises(Exception, match="Unknown flow set"):
+            self.parser.parse_assertion("COUNT(outgoing_flow) >= 1")
+
+    def test_unknown_flow_set_in_for_each_is_rejected(self):
+        with pytest.raises(Exception, match="Unknown flow set"):
+            self.parser.parse_assertion("FOR_EACH telepathy: is_default == true")
+
+
+class TestParseAssertionMemberSet:
+    """'elements OF <element_type>[.<subtype>]' — what a container rule counts."""
+
+    def setup_method(self):
+        self.parser = ExpressionParser()
+
+    def test_member_set_without_subtype(self):
+        result = self.parser.parse_assertion("COUNT(elements OF pool) >= 2")
+        assert isinstance(result, CountAssertion)
+        assert result.item_sets == [MemberSet(element_type="pool", subtype="")]
+        assert result.number == 2
+
+    def test_member_set_with_subtype(self):
+        result = self.parser.parse_assertion("COUNT(elements OF event.start) >= 1")
+        assert isinstance(result, CountAssertion)
+        assert result.item_sets == [MemberSet(element_type="event", subtype="start")]
+
+    def test_member_set_combines_with_flow_set(self):
+        result = self.parser.parse_assertion(
+            "COUNT(elements OF pool) + COUNT(elements OF message_flow) >= 3"
+        )
+        assert isinstance(result, CountAssertion)
+        assert result.item_sets == [
+            MemberSet(element_type="pool", subtype=""),
+            MemberSet(element_type="message_flow", subtype=""),
+        ]
+
+    def test_member_set_is_rejected_in_for_each(self):
+        """FOR_EACH iterates flows; members are counted, not iterated."""
+        with pytest.raises(Exception, match="Invalid FOR_EACH"):
+            self.parser.parse_assertion("FOR_EACH elements OF pool: is_closed == false")
 
 
 class TestParseAssertionForEach:

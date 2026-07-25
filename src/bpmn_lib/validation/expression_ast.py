@@ -21,12 +21,44 @@ RESOLVER_ARITY: Dict[str, int] = {
 # 'attached' is the activity a boundary event is attached to.
 RESOLVER_ARGUMENTS: List[str] = ["self", "source", "target", "attached"]
 
+# Named collections an element offers to COUNT / FOR_EACH / EXISTS. The parser
+# rejects anything else at load time, the rule engine resolves the names.
+FLOW_SET_NAMES: List[str] = [
+    "incoming_flows",
+    "outgoing_flows",
+    "incoming_message_flows",
+    "outgoing_message_flows",
+    "message_event_definitions",
+]
+
+
+@dataclass(frozen=True)
+class FlowSet:
+    """A named collection of the selected element, e.g. incoming_flows."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class MemberSet:
+    """'elements OF <element_type>[.<subtype>]' — the members of a container.
+
+    Only containers have members, so this item set is the counterpart of FlowSet:
+    one applies to elements, the other to processes and collaborations.
+    """
+
+    element_type: str
+    subtype: str
+
+
+ItemSet = Union[FlowSet, MemberSet]
+
 
 @dataclass(frozen=True)
 class CountAssertion:
-    """COUNT(flow) operator number — or COUNT(f1) + COUNT(f2) operator number."""
+    """COUNT(items) operator number — or COUNT(a) + COUNT(b) operator number."""
 
-    flows: List[str]
+    item_sets: List[ItemSet]
     operator: str
     number: int
 

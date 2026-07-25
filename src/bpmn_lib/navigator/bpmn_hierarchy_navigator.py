@@ -3,7 +3,7 @@ BPMN Hierarchy Navigator - Zentrale Klasse für die Navigation und Verwaltung de
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Tuple, Union
 from datetime import datetime
 from basic_framework.proc_frame import log_msg, log_and_raise
 from basic_framework.container_utils.container_in_memory import ContainerInMemory
@@ -21,6 +21,8 @@ from bpmn_lib.navigator.bpmn_constants import (
     TBL_EVENT,
     TBL_GATEWAY,
     TBL_BPMN_ELEMENT,
+    TBL_BPMN_MODEL,
+    TBL_COLLABORATION,
     TBL_PROCESS_ELEMENT,
     TBL_BPMN_PROCESS,
     TBL_SEQUENCE_FLOW,
@@ -128,6 +130,9 @@ class BPMNHierarchyNavigator:
 
         # Element-Mapping aufbauen (muss nach Hierarchie-Struktur erfolgen)
         self._build_element_mapping()
+
+        # Container-Tabellen aus dem Schema ableiten
+        self.m_container_tables: List[str] = self._collect_container_tables()
 
         log_msg("BPMNHierarchyNavigator initialisiert")
 
@@ -1119,6 +1124,157 @@ class BPMNHierarchyNavigator:
             return None
 
         return str(s_collaboration_id)
+
+    # ------------------------------------------------------------------
+    # Container (Behaelter direkt unter dem Modell)
+    # ------------------------------------------------------------------
+
+    def _collect_container_tables(self) -> List[str]:
+        """Ermittelt alle Container-Tabellen aus dem Schema.
+
+        Ein Container ist ein Behaelter direkt unter dem Modell und damit jede
+        Tabelle mit einem Fremdschluessel auf bpmn_model. Das trifft auf
+        bpmn_process und collaboration zu und auf bpmn_element nicht. Die Liste
+        wird abgeleitet statt aufgezaehlt, damit eine spaetere Containerart
+        allein durch die Schemadatei bekannt wird.
+        """
+        table_names: List[str] = []
+
+        for relationship in self.m_database.get_schema().get_relationships():
+            if relationship.get_target_table() != TBL_BPMN_MODEL:
+                continue
+            s_table_name = relationship.get_source_table()
+            if s_table_name not in table_names:
+                table_names.append(s_table_name)
+
+        return sorted(table_names)
+
+    def get_container_tables(self) -> List[str]:
+        """Gibt die Namen aller Container-Tabellen zurueck."""
+        return list(self.m_container_tables)
+
+    def is_container_table(self, s_table_name: str) -> bool:
+        """Prueft, ob eine Tabelle ein Container unterhalb des Modells ist."""
+        return s_table_name in self.m_container_tables
+
+    def is_element_table(self, s_table_name: str) -> bool:
+        """Prueft, ob eine Tabelle Teil der bpmn_element-Hierarchie ist."""
+        return s_table_name == self.m_root_table or s_table_name in self.m_child_to_parent
+
+    def get_container_ids(self, s_container_table: str) -> List[str]:
+        """Gibt die Primaerschluessel aller Datensaetze einer Container-Tabelle zurueck."""
+        self._require_container_table(s_container_table)
+
+        s_pk_column = self._get_primary_key_column(s_container_table)
+        table = self.m_database.get_table(s_container_table)
+
+        if not table.field_exists(s_pk_column):
+            log_and_raise(ValueError(
+                f"Container-Tabelle '{s_container_table}' hat keine Primaerschluessel-Spalte "
+                f"'{s_pk_column}'"
+            ))
+
+        container_ids: List[str] = []
+        iterator = table.create_iterator()
+
+        while not iterator.is_empty():
+            container_ids.append(str(iterator.value(s_pk_column)))
+            iterator.pp()
+
+        return container_ids
+
+    def get_container_attribute(
+        self, s_container_table: str, s_container_id: str, s_attribute_name: str
+    ) -> Any:
+        """
+        Gibt ein Attribut eines Containers zurueck.
+
+        Anders als bei Elementen gibt es hier keine Vererbungskette, in der ein
+        Attribut weiter oben stehen koennte: Ein Container hat genau eine Tabelle.
+        Eine fehlende Spalte ist deshalb eindeutig ein Fehler und keine
+        Fundstelle, die weiter oben noch auftauchen koennte.
+        """
+        self._require_container_table(s_container_table)
+
+        iterator = self.m_database.get_by_primary_key(s_container_table, s_container_id)
+
+        if iterator is None:
+            log_and_raise(ValueError(
+                f"Container '{s_container_id}' in Tabelle '{s_container_table}' nicht gefunden"
+            ))
+
+        if not iterator.field_exists(s_attribute_name):
+            log_and_raise(ValueError(
+                f"Spalte '{s_attribute_name}' existiert nicht in Container-Tabelle "
+                f"'{s_container_table}'"
+            ))
+
+        return iterator.value(s_attribute_name)
+
+    def get_container_members(self, s_container_table: str, s_container_id: str) -> List[str]:
+        """
+        Gibt die bpmn_element_ids der Elemente zurueck, die ein Container enthaelt.
+
+        Die Mitgliedschaft ist je Containerart unterschiedlich modelliert - so wie
+        es Validierungsregel 9 des Schemas selbst formuliert: Ein Prozess enthaelt
+        seine Elemente ueber die Zuordnungstabelle process_element, eine
+        Kollaboration ueber die Spalte collaboration_id der Elemente.
+
+        Die Unterscheidung laesst sich nicht aus den Fremdschluesseln ableiten:
+        pool.bpmn_process_id zeigt zwar auf einen Prozess, benennt aber den
+        ausgefuehrten Prozess und keine Zugehoerigkeit.
+        """
+        self._require_container_table(s_container_table)
+
+        if s_container_table == TBL_BPMN_PROCESS:
+            return list(self.get_process_elements(s_container_id))
+
+        if s_container_table == TBL_COLLABORATION:
+            return self._get_collaboration_members(s_container_id)
+
+        log_and_raise(ValueError(
+            f"Fuer Container-Tabelle '{s_container_table}' ist keine Mitgliedschaft "
+            f"definiert. Bekannt sind '{TBL_BPMN_PROCESS}' und '{TBL_COLLABORATION}'"
+        ))
+
+    def _get_collaboration_members(self, s_collaboration_id: str) -> List[str]:
+        """Sammelt alle Elemente, deren eigene collaboration_id den Container nennt."""
+        member_ids: List[str] = []
+
+        for s_table_name, s_column_name in self._get_referencing_columns(TBL_COLLABORATION):
+            table = self.m_database.get_table(s_table_name)
+
+            if not table.field_exists("bpmn_element_id"):
+                continue
+
+            condition = ConditionEquals(s_column_name, s_collaboration_id)
+            iterator = table.create_iterator(True, condition)
+
+            while not iterator.is_empty():
+                member_ids.append(str(iterator.value("bpmn_element_id")))
+                iterator.pp()
+
+        return member_ids
+
+    def _get_referencing_columns(self, s_target_table: str) -> List[Tuple[str, str]]:
+        """Gibt alle (Tabelle, Spalte)-Paare zurueck, die auf eine Tabelle verweisen."""
+        references: List[Tuple[str, str]] = []
+
+        for relationship in self.m_database.get_schema().get_relationships():
+            if relationship.get_target_table() == s_target_table:
+                references.append(
+                    (relationship.get_source_table(), relationship.get_source_column())
+                )
+
+        return references
+
+    def _require_container_table(self, s_container_table: str) -> None:
+        """Bricht ab, wenn die Tabelle kein Container ist."""
+        if not self.is_container_table(s_container_table):
+            log_and_raise(ValueError(
+                f"Tabelle '{s_container_table}' ist kein Container. Container sind: "
+                f"{self.m_container_tables}"
+            ))
 
     def get_data_inputs(self, bpmn_element_id: Union[str, int]) -> Optional[List[str]]:
         """

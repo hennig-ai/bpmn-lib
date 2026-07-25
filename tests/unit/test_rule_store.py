@@ -55,6 +55,12 @@ def mock_navigator_with_schema() -> MagicMock:
     # Mock navigator.get_schema()
     navigator_mock.get_schema.return_value = schema_mock
 
+    # Container tables are derived from the schema by the real navigator
+    container_tables = ["bpmn_process", "collaboration"]
+    navigator_mock.get_container_tables.return_value = container_tables
+    navigator_mock.is_container_table.side_effect = lambda name: name in container_tables
+    navigator_mock.is_element_table.side_effect = mock_has_table
+
     return navigator_mock
 
 
@@ -270,6 +276,53 @@ class TestRuleStoreSchemaValidation:
 """
         (tmp_path / "rules.md").write_text(content, encoding="utf-8")
         with pytest.raises(ValueError, match="not a valid table"):
+            build_rule_store(str(tmp_path), mock_navigator_with_schema)
+
+    def test_table_outside_the_element_hierarchy_raises(
+        self, tmp_path: Path, mock_navigator_with_schema: MagicMock
+    ):
+        """A real table that no rule can select must be rejected, not silently ignored.
+
+        message_definition exists in the schema but is not part of the bpmn_element
+        hierarchy — selection would return nothing and the rule would report success.
+        """
+        mock_navigator_with_schema.get_schema().has_table.side_effect = (
+            lambda table_name: table_name in ["event", "gateway", "activity", "message_definition"]
+        )
+        content = """# Rules
+
+| rule_id | element_type | subtype | assertion | where_clause | level | message_template |
+|---------|-------------|---------|-----------|-------------|-------|-----------------|
+| BAD-003 | message_definition | | COUNT(outgoing_flows) >= 1 | | basic | msg |
+"""
+        (tmp_path / "rules.md").write_text(content, encoding="utf-8")
+        with pytest.raises(ValueError, match="neither part of the bpmn_element hierarchy"):
+            build_rule_store(str(tmp_path), mock_navigator_with_schema)
+
+    def test_container_rule_is_accepted(self, tmp_path: Path, mock_navigator_with_schema: MagicMock):
+        """A container is selectable even though it is not an element table."""
+        content = """# Rules
+
+| rule_id | element_type | subtype | assertion | where_clause | level | message_template |
+|---------|-------------|---------|-----------|-------------|-------|-----------------|
+| PRC-001 | bpmn_process | | COUNT(elements OF event.start) >= 1 | is_executable == true | spec_v2 | msg |
+| COL-001 | collaboration | | COUNT(elements OF pool) >= 2 | | best_practice | msg |
+"""
+        (tmp_path / "rules.md").write_text(content, encoding="utf-8")
+        store = build_rule_store(str(tmp_path), mock_navigator_with_schema)
+
+        assert store is not None
+
+    def test_container_with_subtype_raises(self, tmp_path: Path, mock_navigator_with_schema: MagicMock):
+        """Containers have no {table}_type column, so a subtype would filter everything away."""
+        content = """# Rules
+
+| rule_id | element_type | subtype | assertion | where_clause | level | message_template |
+|---------|-------------|---------|-----------|-------------|-------|-----------------|
+| BAD-004 | bpmn_process | start | COUNT(elements OF event.start) >= 1 | | spec_v2 | msg |
+"""
+        (tmp_path / "rules.md").write_text(content, encoding="utf-8")
+        with pytest.raises(ValueError, match="has no subtype"):
             build_rule_store(str(tmp_path), mock_navigator_with_schema)
 
     def test_invalid_subtype_raises(self, tmp_path: Path, mock_navigator_with_schema: MagicMock):

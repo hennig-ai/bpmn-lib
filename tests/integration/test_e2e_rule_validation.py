@@ -29,6 +29,9 @@ def _create_mock_navigator(
     nav.get_element_attribute.side_effect = lambda eid, attr: None
     nav.get_outgoing_sequence_flows.side_effect = lambda eid: outgoing_flows.get(eid, [])
     nav.get_incoming_sequence_flows.side_effect = lambda eid: []
+    nav.is_container_table.side_effect = lambda table_name: False
+    nav.is_element_table.side_effect = lambda table_name: True
+    nav.get_container_tables.return_value = []
     return nav
 
 
@@ -463,6 +466,7 @@ class TestAllViolationsAsErrors:
 
     def test_violations_are_errors_not_warnings(self) -> None:
         nav = Mock(spec=BPMNHierarchyNavigator)
+        nav.is_container_table.side_effect = lambda table_name: False
         nav.get_element_ids_by_type.side_effect = lambda t: {"start_event": ["se1"]}.get(t, [])
         nav.get_outgoing_sequence_flows.side_effect = lambda eid: []
         nav.get_incoming_sequence_flows.side_effect = lambda eid: []
@@ -501,6 +505,7 @@ class TestAnd001RuleWithSubtype:
         """Test: AND-001 Regel erkennt Parallel Gateway mit nur 1 ausgehenden Flow."""
         # Setup: Parallel Gateway mit nur 1 ausgehenden Flow
         nav = Mock(spec=BPMNHierarchyNavigator)
+        nav.is_container_table.side_effect = lambda table_name: False
         nav.get_element_ids_by_type.side_effect = lambda t: {"gateway": ["pg1"]}.get(t, [])
         nav.get_element_attribute.side_effect = lambda eid, attr: {
             "pg1": {"gateway_type": "parallel", "gateway_direction": "diverging"}
@@ -536,6 +541,7 @@ class TestAnd001RuleWithSubtype:
     def test_and_001_passes_with_two_outgoing_flows(self) -> None:
         """Test: AND-001 Regel erfolgt mit 2 ausgehenden Flows."""
         nav = Mock(spec=BPMNHierarchyNavigator)
+        nav.is_container_table.side_effect = lambda table_name: False
         nav.get_element_ids_by_type.side_effect = lambda t: {"gateway": ["pg1"]}.get(t, [])
         nav.get_element_attribute.side_effect = lambda eid, attr: {
             "pg1": {"gateway_type": "parallel"}
@@ -570,6 +576,7 @@ class TestAnd001RuleWithSubtype:
         """Test: AND-001 Regel ignoriert Exclusive Gateways (subtype = "exclusive")."""
         # Setup: Exclusive Gateway mit nur 1 ausgehenden Flow (sollte nicht von AND-001 geprüft werden)
         nav = Mock(spec=BPMNHierarchyNavigator)
+        nav.is_container_table.side_effect = lambda table_name: False
         nav.get_element_ids_by_type.side_effect = lambda t: {"gateway": ["eg1"]}.get(t, [])
         nav.get_element_attribute.side_effect = lambda eid, attr: {
             "eg1": {"gateway_type": "exclusive"}  # NOT parallel
@@ -610,6 +617,7 @@ class TestAllRuleTypesWithSubtype:
     def test_srt_001_start_event_rule(self) -> None:
         """Test: SRT-001 Regel für Start Events (subtype = "start")."""
         nav = Mock(spec=BPMNHierarchyNavigator)
+        nav.is_container_table.side_effect = lambda table_name: False
         nav.get_element_ids_by_type.side_effect = lambda t: {
             "event": ["se1", "ee1"]  # Start Event und End Event
         }.get(t, [])
@@ -646,6 +654,7 @@ class TestAllRuleTypesWithSubtype:
     def test_end_001_end_event_rule(self) -> None:
         """Test: END-001 Regel für End Events (subtype = "end")."""
         nav = Mock(spec=BPMNHierarchyNavigator)
+        nav.is_container_table.side_effect = lambda table_name: False
         nav.get_element_ids_by_type.side_effect = lambda t: {
             "event": ["se1", "ee1"]
         }.get(t, [])
@@ -682,6 +691,7 @@ class TestAllRuleTypesWithSubtype:
     def test_xor_001_exclusive_gateway_rule(self) -> None:
         """Test: XOR-001 Regel für Exclusive Gateways (subtype = "exclusive")."""
         nav = Mock(spec=BPMNHierarchyNavigator)
+        nav.is_container_table.side_effect = lambda table_name: False
         nav.get_element_ids_by_type.side_effect = lambda t: {
             "gateway": ["xor1", "and1"]
         }.get(t, [])
@@ -718,6 +728,7 @@ class TestAllRuleTypesWithSubtype:
     def test_flo_001_flow_object_no_subtype(self) -> None:
         """Test: FLO-001 Regel für Flow Objects (kein subtype)."""
         nav = Mock(spec=BPMNHierarchyNavigator)
+        nav.is_container_table.side_effect = lambda table_name: False
         # flow_object ist ein übergreifendes Konzept (activity + event + gateway)
         nav.get_element_ids_by_type.side_effect = lambda t: {
             "activity": ["a1", "a2"],

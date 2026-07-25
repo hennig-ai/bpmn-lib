@@ -13,6 +13,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Silence the error beep of basic_framework during test runs. The suite triggers
+# log_and_raise() on purpose dozens of times, and every call plays two tones.
+#
+# Must be set before basic_framework is imported: proc_frame reads the variable
+# once, at import time. pytest loads conftest.py ahead of every test module, so
+# this is early enough. setdefault leaves the door open to turn the beep back on
+# from the environment.
+os.environ.setdefault("BASIC_FRAMEWORK_DISABLE_BEEP", "1")
+
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 

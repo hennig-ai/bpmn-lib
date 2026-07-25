@@ -2,7 +2,7 @@
 DatabaseSchemaParser - Erstellt DatabaseSchema aus dem TableDictionary.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from basic_framework.proc_frame import log_msg, log_and_raise
 from basic_framework.container_utils.container_in_memory import ContainerInMemory
 from basic_framework.container_utils.abstract_container import AbstractContainer
@@ -15,6 +15,11 @@ from bpmn_lib.database.schema.column_definition import ColumnDefinition
 from bpmn_lib.database.schema.foreign_key_relationship import ForeignKeyRelationship
 from bpmn_lib.utils.validation_result import ValidationResult
 
+# Ueberschrift, die einen Tabellenabschnitt einleitet: "### Table: bpmn_element"
+TABLE_HEADING_PREFIX = "Table: "
+
+# Einleitung einer Wertedomaene: "**Value Domain for element_type**: [...]"
+VALUE_DOMAIN_MARKER = "Value Domain for"
 
 
 class DatabaseSchemaParser:
@@ -24,7 +29,8 @@ class DatabaseSchemaParser:
         """Konstruktor."""
         self.m_TableDict: Dict[str, ContainerInMemory] = {}
         self.m_Schema: Optional[DatabaseSchema] = None
-        self.m_ValueDomains: Dict[str, List[str]] = {}
+        # (Tabellenname, Spaltenname) -> erlaubte Werte
+        self.m_ValueDomains: Dict[Tuple[str, str], List[str]] = {}
 
     def parse_documents(self, oValResult: ValidationResult, oDoc: MarkdownDocument,
                       sSchemaName: str = "BPMN Schema") -> DatabaseSchema:
@@ -44,7 +50,10 @@ class DatabaseSchemaParser:
         # 2. Foreign Key Beziehungen extrahieren
         self.parse_all_relationships()
 
-        # 3. Schema validieren
+        # 3. Value Domains aus den Absaetzen zwischen den Tabellen uebernehmen
+        self.parse_value_domains(oDoc)
+
+        # 4. Schema validieren
         if self.m_Schema.validate_schema():
             log_msg("SchemaParser: Schema erfolgreich geparst und validiert.")
         else:
@@ -276,58 +285,80 @@ class DatabaseSchemaParser:
         log_msg("Suche Value Domains im Markdown-Dokument...")
 
         # Rekursiv nach Value Domain Definitionen suchen
-        self.search_value_domains_recursive(oMarkdownDoc.get_root_node())
+        self.search_value_domains_recursive(oMarkdownDoc.get_root_node(), "")
 
         # Gefundene Value Domains auf Tabellen anwenden
         self.apply_value_domains()
 
-    def search_value_domains_recursive(self, oNode: KnotObject) -> None:
-        """Rekursive Suche nach Value Domains."""
-        # Prüfen ob dies ein Value Domain Knoten ist
-        if oNode.m_sName == "Paragraph" or oNode.m_sName == "Content":
-            if "content" in oNode.m_Leafs:
-                sContent = oNode.m_Leafs["content"]
+    def search_value_domains_recursive(self, oNode: KnotObject, sTableName: str) -> None:
+        """Rekursive Suche nach Value Domains.
 
-                # Nach "Value Domain for" Pattern suchen
-                if "Value Domain for" in sContent:
-                    self.parse_value_domain_content(sContent)
+        Das Markdown-Modell kennt keinen Absatz-Knoten: Eine Zeile wie
+        '**Value Domain for x**: [...]' landet als Listeneintrag im Baum, und ihr
+        Text steht im Schluessel, unter dem der Knoten am Elternknoten haengt -
+        nicht in einem Leaf.
 
-        # Kinder durchsuchen
+        Zugeordnet wird die Domaene der Tabelle, in deren Abschnitt sie steht.
+        Ueber den Spaltennamen allein ginge es schief: 'implementation' gibt es in
+        task, user_task und business_rule_task, aber nur task hat eine Domaene.
+        """
         for vKey in oNode.get_children().keys():
-            self.search_value_domains_recursive(oNode.get_child(vKey))
+            sKey = str(vKey)
+            sChildTable = sTableName
 
-    def parse_value_domain_content(self, sContent: str) -> None:
+            if sKey.startswith(TABLE_HEADING_PREFIX):
+                sChildTable = sKey[len(TABLE_HEADING_PREFIX):].strip()
+            elif VALUE_DOMAIN_MARKER in sKey:
+                self.parse_value_domain_content(sKey, sTableName)
+
+            self.search_value_domains_recursive(oNode.get_child(vKey), sChildTable)
+
+    def parse_value_domain_content(self, sContent: str, sTableName: str) -> None:
         """Parst Value Domain Content."""
         # Format: **Value Domain for column_name**: ["value1", "value2", ...]
 
+        if sTableName == "":
+            log_and_raise(ValueError(
+                f"Value Domain steht ausserhalb eines Tabellenabschnitts und ist "
+                f"keiner Spalte zuzuordnen: '{sContent[:80]}'"
+            ))
+
         # Spaltenname extrahieren
-        nStart = sContent.find("Value Domain for") + len("Value Domain for")
+        nStart = sContent.find(VALUE_DOMAIN_MARKER) + len(VALUE_DOMAIN_MARKER)
         nEnd = sContent.find(":", nStart)
 
-        if nEnd > nStart:
-            sColumnSpec = sContent[nStart:nEnd].strip()
+        if nEnd <= nStart:
+            log_and_raise(ValueError(
+                f"Value Domain in Tabelle '{sTableName}' ohne Doppelpunkt nach dem "
+                f"Spaltennamen: '{sContent[:80]}'"
+            ))
 
-            # ** entfernen falls vorhanden
-            sColumnSpec = sColumnSpec.replace("**", "")
-            sColumnSpec = sColumnSpec.replace("*", "")
-            sColumnSpec = sColumnSpec.strip()
+        # ** entfernen falls vorhanden
+        sColumnSpec = sContent[nStart:nEnd].strip().replace("**", "").replace("*", "").strip()
 
-            # Werte extrahieren
-            nStart = sContent.find("[", nEnd)
-            nEnd = sContent.find("]", nStart)
+        # Werte extrahieren
+        nStart = sContent.find("[", nEnd)
+        nEnd = sContent.find("]", nStart)
 
-            if nStart > 0 and nEnd > nStart:
-                sValues = sContent[nStart + 1:nEnd]
+        if nStart < 0 or nEnd <= nStart:
+            log_and_raise(ValueError(
+                f"Value Domain fuer '{sTableName}.{sColumnSpec}' ohne Werteliste "
+                f"in eckigen Klammern: '{sContent[:80]}'"
+            ))
 
-                # Werte parsen
-                oAllowedValues = self.parse_value_list(sValues)
+        oAllowedValues = self.parse_value_list(sContent[nStart + 1:nEnd])
 
-                if len(oAllowedValues) > 0:
-                    # Im Dictionary speichern
-                    if sColumnSpec not in self.m_ValueDomains:
-                        self.m_ValueDomains[sColumnSpec] = oAllowedValues
-                        log_msg(f"Value Domain gefunden fuer '{sColumnSpec}' mit "
-                               f"{len(oAllowedValues)} erlaubten Werten.")
+        if len(oAllowedValues) == 0:
+            log_and_raise(ValueError(
+                f"Value Domain fuer '{sTableName}.{sColumnSpec}' enthaelt keine Werte"
+            ))
+
+        vDomainKey = (sTableName, sColumnSpec)
+
+        if vDomainKey not in self.m_ValueDomains:
+            self.m_ValueDomains[vDomainKey] = oAllowedValues
+            log_msg(f"Value Domain gefunden fuer '{sTableName}.{sColumnSpec}' mit "
+                   f"{len(oAllowedValues)} erlaubten Werten.")
 
     def parse_value_list(self, sValues: str) -> List[str]:
         """Parst eine Liste von Werten."""
@@ -350,25 +381,27 @@ class DatabaseSchemaParser:
         return oValues
 
     def apply_value_domains(self) -> None:
-        """Wendet gefundene Value Domains auf Tabellen an."""
+        """Wendet gefundene Value Domains auf genau ihre Tabelle und Spalte an."""
         if len(self.m_ValueDomains) == 0:
             return
 
         log_msg(f"Wende {len(self.m_ValueDomains)} Value Domains an...")
 
-        # Für jeden Value Domain
-        for vKey in self.m_ValueDomains.keys():
-            sColumnSpec = vKey
+        o_schema = self._get_schema()
 
-            # Versuche Tabelle und Spalte zu finden
-            o_schema = self._get_schema()
-            oTableNames = o_schema.get_table_names()
+        for (sTableName, sColumnName), oAllowedValues in self.m_ValueDomains.items():
+            if not o_schema.has_table(sTableName):
+                log_and_raise(ValueError(
+                    f"Value Domain verweist auf die unbekannte Tabelle '{sTableName}'"
+                ))
 
-            for vTableName in oTableNames:
-                oTableDef = o_schema.get_table_definition(vTableName)
+            oTableDef = o_schema.get_table_definition(sTableName)
 
-                # Prüfe ob Spalte in dieser Tabelle existiert
-                if oTableDef.has_column(sColumnSpec):
-                    # Value Domain anwenden
-                    oTableDef.add_value_domain(sColumnSpec, self.m_ValueDomains[vKey])
-                    log_msg(f"Value Domain angewendet auf {vTableName}.{sColumnSpec}")
+            if not oTableDef.has_column(sColumnName):
+                log_and_raise(ValueError(
+                    f"Value Domain verweist auf die Spalte '{sColumnName}', "
+                    f"die es in Tabelle '{sTableName}' nicht gibt"
+                ))
+
+            oTableDef.add_value_domain(sColumnName, oAllowedValues)
+            log_msg(f"Value Domain angewendet auf {sTableName}.{sColumnName}")

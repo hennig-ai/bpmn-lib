@@ -17,8 +17,11 @@ from bpmn_lib.validation.expression_ast import (
     CountAssertion,
     ElementAssertion,
     ExistsAssertion,
+    FlowSet,
     ForEachAssertion,
+    ItemSet,
     LiteralOperand,
+    MemberSet,
     Operand,
     ResolverOperand,
     ValueListOperand,
@@ -44,10 +47,16 @@ class _EvaluationContext:
 
     flow_info is set while iterating flows (FOR_EACH / EXISTS) and None for
     element-level assertions (ASSERT).
+
+    container_table names the container table when the rule targets processes or
+    collaborations, and is empty for element rules. Container IDs live in their own
+    ID space — a process '001' is not the element '001' — so everything that reads
+    data has to know which of the two it is holding.
     """
 
     element_id: str
     flow_info: Optional[Any]
+    container_table: str
 
 
 class BPMNRuleEngine:
@@ -125,28 +134,72 @@ class BPMNRuleEngine:
 
         return element_ids
 
-    def _apply_where_clause(self, element_ids: List[str], where_clause: WhereClause) -> List[str]:
-        """Filter element IDs by where-clause."""
+    def _apply_where_clause(
+        self, target_ids: List[str], where_clause: WhereClause, container_table: str
+    ) -> List[str]:
+        """Filter target IDs by where-clause."""
         if where_clause is None:
-            return element_ids
+            return target_ids
 
         if isinstance(where_clause, WhereEquals):
             return [
-                eid for eid in element_ids
-                if self._navigator.get_element_attribute(eid, where_clause.attribute_name) == where_clause.value
+                tid for tid in target_ids
+                if self._read_attribute(container_table, tid, where_clause.attribute_name)
+                == where_clause.value
             ]
 
         return [
-            eid for eid in element_ids
-            if self._navigator.get_element_attribute(eid, where_clause.attribute_name) not in where_clause.values
+            tid for tid in target_ids
+            if self._read_attribute(container_table, tid, where_clause.attribute_name)
+            not in where_clause.values
         ]
+
+    def _read_attribute(self, container_table: str, target_id: str, attribute_name: str) -> Any:
+        """Read an attribute of an element or of a container."""
+        if container_table:
+            return self._navigator.get_container_attribute(
+                container_table, target_id, attribute_name
+            )
+
+        return self._navigator.get_element_attribute(target_id, attribute_name)
 
     # ------------------------------------------------------------------
     # Flow retrieval
     # ------------------------------------------------------------------
 
+    def _get_items(self, context: _EvaluationContext, item_set: ItemSet) -> List[Any]:
+        """Get the items a COUNT/FOR_EACH/EXISTS works on."""
+        if isinstance(item_set, MemberSet):
+            return self._get_container_members(context, item_set)
+
+        if context.container_table:
+            log_and_raise(ValueError(
+                f"Flow set '{item_set.name}' is not available on container "
+                f"'{context.container_table}'. A container has members, not flows — "
+                f"count them with 'elements OF <element_type>'"
+            ))
+
+        return self._get_flows(context.element_id, item_set.name)
+
+    def _get_container_members(
+        self, context: _EvaluationContext, member_set: MemberSet
+    ) -> List[str]:
+        """Get the members of the current container, filtered by type and subtype."""
+        if not context.container_table:
+            log_and_raise(ValueError(
+                f"'elements OF {member_set.element_type}' is only available on a "
+                f"container. Element '{context.element_id}' has no members"
+            ))
+
+        member_ids = self._navigator.get_container_members(
+            context.container_table, context.element_id
+        )
+        of_type = set(self._select_elements(member_set.element_type, member_set.subtype))
+
+        return [member_id for member_id in member_ids if member_id in of_type]
+
     def _get_flows(self, element_id: str, flow_name: str) -> List[Any]:
-        """Get the items a COUNT/FOR_EACH/EXISTS iterates over, by name.
+        """Get the named collection of an element, by name.
 
         Besides the two sequence flow directions this covers message flows and the
         message_event_definition of an event. The latter is not a flow at all — it
@@ -190,87 +243,111 @@ class BPMNRuleEngine:
     # ------------------------------------------------------------------
 
     def _evaluate_rule(self, rule: Dict[str, Any]) -> None:
-        """Evaluate a single rule against all matching elements.
+        """Evaluate a single rule against all matching elements or containers.
 
         Process flow:
-        1. Select elements by element_type and optional subtype filtering
+        1. Select the targets — either bpmn_elements by type and optional subtype,
+           or the rows of a container table (bpmn_process, collaboration)
         2. Apply where_clause filtering (e.g., "gateway_direction == diverging")
-        3. Parse and evaluate assertion against remaining elements
+        3. Parse and evaluate assertion against remaining targets
 
         Subtype filtering:
         - If subtype is provided: filters to elements where {element_type}_type == subtype
           Example: element_type='event', subtype='start' → only start events
         - If subtype is empty: selects ALL elements of the type
         - Special case: flow_object ignores subtype (applies to all flow objects)
+        - Containers have no subtype; rule_store rejects one at load time
 
         Args:
             rule: Dict with keys: element_type, subtype, assertion, where_clause
         """
         element_type = str(rule["element_type"])
         subtype = str(rule["subtype"]).strip()
-        element_ids = self._select_elements(element_type, subtype)
+
+        container_table = element_type if self._navigator.is_container_table(element_type) else ""
+        if container_table:
+            target_ids = self._navigator.get_container_ids(container_table)
+        else:
+            target_ids = self._select_elements(element_type, subtype)
 
         where_text = rule["where_clause"]
         where_clause = self._parser.parse_where_clause(str(where_text) if where_text else "")
-        element_ids = self._apply_where_clause(element_ids, where_clause)
+        target_ids = self._apply_where_clause(target_ids, where_clause, container_table)
 
         assertion_text = str(rule["assertion"])
         assertion = self._parser.parse_assertion(assertion_text)
 
-        for element_id in element_ids:
-            self._evaluate_assertion(element_id, assertion, rule)
+        for target_id in target_ids:
+            context = _EvaluationContext(
+                element_id=target_id, flow_info=None, container_table=container_table
+            )
+            self._evaluate_assertion(context, assertion, rule)
 
-    def _evaluate_assertion(self, element_id: str, assertion: Assertion, rule: Dict[str, Any]) -> None:
+    def _evaluate_assertion(
+        self, context: _EvaluationContext, assertion: Assertion, rule: Dict[str, Any]
+    ) -> None:
         """Dispatch assertion evaluation by type."""
         if isinstance(assertion, CountAssertion):
-            self._evaluate_count(element_id, assertion, rule)
+            self._evaluate_count(context, assertion, rule)
         elif isinstance(assertion, ForEachAssertion):
-            self._evaluate_for_each(element_id, assertion, rule)
+            self._evaluate_for_each(context, assertion, rule)
         elif isinstance(assertion, ExistsAssertion):
-            self._evaluate_exists(element_id, assertion, rule)
+            self._evaluate_exists(context, assertion, rule)
         elif isinstance(assertion, ElementAssertion):
-            self._evaluate_element_assertion(element_id, assertion, rule)
+            self._evaluate_element_assertion(context, assertion, rule)
         else:
-            self._evaluate_assertion(element_id, assertion.left, rule)
-            self._evaluate_assertion(element_id, assertion.right, rule)
+            self._evaluate_assertion(context, assertion.left, rule)
+            self._evaluate_assertion(context, assertion.right, rule)
 
-    def _evaluate_count(self, element_id: str, count_assertion: CountAssertion, rule: Dict[str, Any]) -> None:
+    def _evaluate_count(
+        self, context: _EvaluationContext, count_assertion: CountAssertion, rule: Dict[str, Any]
+    ) -> None:
         """Evaluate a COUNT assertion."""
         total = 0
-        for flow_name in count_assertion.flows:
-            flows = self._get_flows(element_id, flow_name)
-            total += len(flows)
+        for item_set in count_assertion.item_sets:
+            total += len(self._get_items(context, item_set))
 
         if not self._compare(total, count_assertion.operator, count_assertion.number):
-            self._val_result.add_error(self._format_error_message(rule, element_id, ""))
+            self._val_result.add_error(self._format_error_message(rule, context.element_id, ""))
 
-    def _evaluate_for_each(self, element_id: str, for_each: ForEachAssertion, rule: Dict[str, Any]) -> None:
+    def _evaluate_for_each(
+        self, context: _EvaluationContext, for_each: ForEachAssertion, rule: Dict[str, Any]
+    ) -> None:
         """Evaluate a FOR_EACH assertion — report error per failing flow."""
-        flows = self._get_flows(element_id, for_each.flow)
-        for flow_info in flows:
-            context = _EvaluationContext(element_id=element_id, flow_info=flow_info)
-            if not self._evaluate_check(context, for_each.check):
+        for flow_info in self._get_items(context, FlowSet(name=for_each.flow)):
+            flow_context = _EvaluationContext(
+                element_id=context.element_id,
+                flow_info=flow_info,
+                container_table=context.container_table,
+            )
+            if not self._evaluate_check(flow_context, for_each.check):
                 self._val_result.add_error(
-                    self._format_error_message(rule, element_id, self._item_identifier(flow_info))
+                    self._format_error_message(
+                        rule, context.element_id, self._item_identifier(flow_info)
+                    )
                 )
 
-    def _evaluate_exists(self, element_id: str, exists: ExistsAssertion, rule: Dict[str, Any]) -> None:
+    def _evaluate_exists(
+        self, context: _EvaluationContext, exists: ExistsAssertion, rule: Dict[str, Any]
+    ) -> None:
         """Evaluate an EXISTS assertion — report error if no flow satisfies."""
-        flows = self._get_flows(element_id, exists.flow)
-        for flow_info in flows:
-            context = _EvaluationContext(element_id=element_id, flow_info=flow_info)
-            if self._evaluate_check(context, exists.check):
+        for flow_info in self._get_items(context, FlowSet(name=exists.flow)):
+            flow_context = _EvaluationContext(
+                element_id=context.element_id,
+                flow_info=flow_info,
+                container_table=context.container_table,
+            )
+            if self._evaluate_check(flow_context, exists.check):
                 return  # At least one satisfies
         # None satisfied — per D.5: empty string for flow_id
-        self._val_result.add_error(self._format_error_message(rule, element_id, ""))
+        self._val_result.add_error(self._format_error_message(rule, context.element_id, ""))
 
     def _evaluate_element_assertion(
-        self, element_id: str, element_assertion: ElementAssertion, rule: Dict[str, Any]
+        self, context: _EvaluationContext, element_assertion: ElementAssertion, rule: Dict[str, Any]
     ) -> None:
-        """Evaluate an ASSERT assertion against the selected element itself."""
-        context = _EvaluationContext(element_id=element_id, flow_info=None)
+        """Evaluate an ASSERT assertion against the selected element or container."""
         if not self._evaluate_check(context, element_assertion.check):
-            self._val_result.add_error(self._format_error_message(rule, element_id, ""))
+            self._val_result.add_error(self._format_error_message(rule, context.element_id, ""))
 
     def _evaluate_check(self, context: _EvaluationContext, check: Check) -> bool:
         """Evaluate check terms against the current evaluation context."""
@@ -305,9 +382,9 @@ class BPMNRuleEngine:
         return self._call_resolver(context, operand)
 
     def _resolve_attribute(self, context: _EvaluationContext, attribute_name: str) -> Any:
-        """Read an attribute from the current flow info, or from the element itself."""
+        """Read an attribute from the current flow info, or from the target itself."""
         if context.flow_info is None:
-            return self._navigator.get_element_attribute(context.element_id, attribute_name)
+            return self._read_attribute(context.container_table, context.element_id, attribute_name)
 
         if not hasattr(context.flow_info, attribute_name):
             log_and_raise(ValueError(
@@ -318,6 +395,15 @@ class BPMNRuleEngine:
 
     def _call_resolver(self, context: _EvaluationContext, resolver: ResolverOperand) -> Any:
         """Execute a resolver function via the navigator."""
+        # Every resolver takes a bpmn_element. Container IDs live in a separate ID
+        # space, so passing one through would not fail — it would silently resolve
+        # a different element that happens to carry the same number.
+        if context.container_table:
+            log_and_raise(ValueError(
+                f"Resolver '{resolver.function}' expects a bpmn_element, but the rule "
+                f"targets container '{context.container_table}'"
+            ))
+
         element_id = self._resolve_element_reference(context, resolver.argument)
 
         # An empty reference (e.g. a boundary event without attachment) resolves to

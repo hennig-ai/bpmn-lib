@@ -14,8 +14,12 @@ from bpmn_lib.validation.expression_ast import (
     CountAssertion,
     ElementAssertion,
     ExistsAssertion,
+    FLOW_SET_NAMES,
+    FlowSet,
     ForEachAssertion,
+    ItemSet,
     LiteralOperand,
+    MemberSet,
     Operand,
     RESOLVER_ARGUMENTS,
     RESOLVER_ARITY,
@@ -25,6 +29,9 @@ from bpmn_lib.validation.expression_ast import (
     WhereEquals,
     WhereNotIn,
 )
+
+# 'elements OF <element_type>' with an optional '.<subtype>' suffix.
+_MEMBER_SET_PATTERN = r'^elements\s+OF\s+([a-z_][a-z0-9_]*)(?:\.([a-z_][a-z0-9_]*))?$'
 
 # Longest match wins, so ">=" must precede ">" and "NOT IN" must precede "IN".
 _TERM_OPERATORS: List[str] = [" NOT IN ", " IN ", "==", "!=", ">=", "<=", ">", "<"]
@@ -94,10 +101,11 @@ class ExpressionParser:
         ))
 
     def _parse_count_expr(self, text: str) -> CountAssertion:
-        """Parse COUNT(flow) op number or COUNT(f1) + COUNT(f2) op number."""
+        """Parse COUNT(items) op number or COUNT(a) + COUNT(b) op number."""
         # Match patterns like:
-        #   COUNT(outgoing) >= 1
-        #   COUNT(incoming) + COUNT(outgoing) >= 2
+        #   COUNT(outgoing_flows) >= 1
+        #   COUNT(incoming_flows) + COUNT(outgoing_flows) >= 2
+        #   COUNT(elements OF event.start) >= 1
         pattern = r'^(COUNT\([^)]+\)(?:\s*\+\s*COUNT\([^)]+\))*)\s*([><=!]+)\s*(\d+)$'
         match = re.match(pattern, text.strip())
         if not match:
@@ -109,12 +117,34 @@ class ExpressionParser:
         operator = match.group(2)
         number = int(match.group(3))
 
-        # Extract flow names from COUNT(flow) parts
-        flows = re.findall(r'COUNT\(([^)]+)\)', count_part)
+        item_sets = [
+            self._parse_item_set(inner.strip(), text)
+            for inner in re.findall(r'COUNT\(([^)]+)\)', count_part)
+        ]
 
         self._validate_operator(operator, text)
 
-        return CountAssertion(flows=flows, operator=operator, number=number)
+        return CountAssertion(item_sets=item_sets, operator=operator, number=number)
+
+    def _parse_item_set(self, text: str, context: str) -> ItemSet:
+        """Parse what a COUNT counts: a named flow set or the members of a container."""
+        match = re.match(_MEMBER_SET_PATTERN, text)
+        if match:
+            subtype = match.group(2)
+            return MemberSet(element_type=match.group(1), subtype=subtype if subtype else "")
+
+        return FlowSet(name=self._validate_flow_name(text, context))
+
+    def _validate_flow_name(self, name: str, context: str) -> str:
+        """Reject an unknown flow set while the rules are being loaded, not while running."""
+        if name not in FLOW_SET_NAMES:
+            log_and_raise(ValueError(
+                f"Unknown flow set '{name}' in: '{context}'. "
+                f"Known flow sets: {FLOW_SET_NAMES}. "
+                f"Container members are counted with 'elements OF <element_type>'"
+            ))
+
+        return name
 
     def _parse_for_each_expr(self, text: str) -> ForEachAssertion:
         """Parse FOR_EACH flow: check."""
@@ -125,7 +155,7 @@ class ExpressionParser:
                 f"Invalid FOR_EACH assertion syntax: '{text}'"
             ))
 
-        flow = match.group(1)
+        flow = self._validate_flow_name(match.group(1), text)
         check_text = match.group(2).strip()
         check = self._parse_check(check_text)
 
@@ -139,7 +169,7 @@ class ExpressionParser:
                 f"Invalid EXISTS assertion syntax: '{text}'"
             ))
 
-        flow = match.group(1)
+        flow = self._validate_flow_name(match.group(1), text)
         check_text = match.group(2).strip()
         check = self._parse_check(check_text)
 

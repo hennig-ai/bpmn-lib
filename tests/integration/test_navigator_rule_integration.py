@@ -32,6 +32,9 @@ def _create_mock_navigator(
     nav.get_element_attribute.side_effect = lambda eid, attr: None
     nav.get_outgoing_sequence_flows.side_effect = lambda eid: outgoing_flows.get(eid, [])
     nav.get_incoming_sequence_flows.side_effect = lambda eid: []
+    nav.is_container_table.side_effect = lambda table_name: False
+    nav.is_element_table.side_effect = lambda table_name: True
+    nav.get_container_tables.return_value = []
     return nav
 
 

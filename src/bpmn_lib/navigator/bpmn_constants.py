@@ -12,6 +12,13 @@ TBL_BPMN_ELEMENT = "bpmn_element"
 TBL_PROCESS_ELEMENT = "process_element"
 TBL_BPMN_PROCESS = "bpmn_process"
 
+# Container-Tabellen (Behaelter direkt unter dem Modell, selbst keine bpmn_elements).
+# Welche Tabellen Container sind, leitet der Navigator aus dem Schema ab: jede Tabelle
+# mit einem Fremdschluessel auf bpmn_model. Namentlich gebraucht werden sie nur dort,
+# wo die Mitgliedschaft aufgeloest wird - die laeuft je Containerart anders.
+TBL_BPMN_MODEL = "bpmn_model"
+TBL_COLLABORATION = "collaboration"
+
 # Flow-Object-Tabellen (Oberbegriff 'flow_object' der Regeldefinitionen)
 TBL_ACTIVITY = "activity"
 TBL_TASK = "task"

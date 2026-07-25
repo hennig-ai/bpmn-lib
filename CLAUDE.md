@@ -119,7 +119,8 @@ For BPMN navigator validation requirements (in development):
 - Process rules (`PRC-xxx`): `req_list/req_for_process/` — rules that validate a process as a whole
 - Element rules (per element type): `req_list/req_for_elements/` — rules that validate an element and its surroundings
 - Validation levels: `basic` (minimal) < `spec_v2` (BPMN 2.0.2 conformance) < `best_practice` (recommendations beyond spec)
-- Rule ID prefixes encode element type: `PRC` (Process), `FLO` (Flow-Object), `SRT` (Start-Event), `END` (End-Event), `XOR` (Exclusive Gateway), `AND` (Parallel Gateway)
+- Rule ID prefixes encode element type: `PRC` (Process), `COL` (Collaboration), `FLO` (Flow-Object), `SRT` (Start-Event), `END` (End-Event), `BND` (Boundary-Event), `MSG` (Message-Event), `XOR` (Exclusive Gateway), `AND` (Parallel Gateway), `MFL` (Message Flow), `POL` (Pool)
+- Rules target either a `bpmn_element` type or a **container** (`bpmn_process`, `collaboration`). Containers are holders below the model, are not BPMN elements, and are counted with `COUNT(elements OF <element_type>[.<subtype>])`
 
 ## Testing Infrastructure
 

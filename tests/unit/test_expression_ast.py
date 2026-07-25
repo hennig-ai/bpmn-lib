@@ -11,7 +11,10 @@ from bpmn_lib.validation.expression_ast import (
     CombinedAssertion,
     CountAssertion,
     ExistsAssertion,
+    FlowSet,
     ForEachAssertion,
+    ItemSet,
+    MemberSet,
     WhereClause,
     WhereEquals,
     WhereNotIn,
@@ -21,13 +24,19 @@ from bpmn_lib.validation.expression_ast import (
 class TestCountAssertion:
 
     def test_create_single_flow(self):
-        ca = CountAssertion(flows=["outgoing_flows"], operator=">=", number=1)
-        assert ca.flows == ["outgoing_flows"]
+        ca = CountAssertion(item_sets=[FlowSet(name="outgoing_flows")], operator=">=", number=1)
+        assert ca.item_sets == [FlowSet(name="outgoing_flows")]
         assert ca.operator == ">="
         assert ca.number == 1
 
+    def test_create_member_set(self):
+        ca = CountAssertion(
+            item_sets=[MemberSet(element_type="event", subtype="start")], operator=">=", number=1
+        )
+        assert ca.item_sets == [MemberSet(element_type="event", subtype="start")]
+
     def test_frozen(self):
-        ca = CountAssertion(flows=["outgoing_flows"], operator=">=", number=1)
+        ca = CountAssertion(item_sets=[FlowSet(name="outgoing_flows")], operator=">=", number=1)
         with pytest.raises(AttributeError):
             ca.number = 2  # type: ignore[misc]
 
@@ -60,8 +69,8 @@ class TestExistsAssertion:
 class TestCombinedAssertion:
 
     def test_create_with_two_assertions(self):
-        left = CountAssertion(flows=["outgoing_flows"], operator=">=", number=1)
-        right = CountAssertion(flows=["incoming_flows"], operator=">=", number=1)
+        left = CountAssertion(item_sets=[FlowSet(name="outgoing_flows")], operator=">=", number=1)
+        right = CountAssertion(item_sets=[FlowSet(name="incoming_flows")], operator=">=", number=1)
         ca = CombinedAssertion(left=left, right=right)
         assert isinstance(ca.left, CountAssertion)
         assert isinstance(ca.right, CountAssertion)
@@ -122,7 +131,7 @@ class TestTypeAliases:
 
     def test_assertion_union_importable(self):
         """Assertion type alias is importable and usable."""
-        a: Assertion = CountAssertion(flows=["outgoing_flows"], operator=">=", number=1)
+        a: Assertion = CountAssertion(item_sets=[FlowSet(name="outgoing_flows")], operator=">=", number=1)
         assert isinstance(a, CountAssertion)
 
     def test_where_clause_optional_union(self):
@@ -131,3 +140,10 @@ class TestTypeAliases:
         assert wc is None
         wc = WhereEquals(attribute_name="x", value="y")
         assert isinstance(wc, WhereEquals)
+
+    def test_item_set_union_covers_both_kinds(self):
+        """ItemSet is what a COUNT counts: a flow set or the members of a container."""
+        flow_set: ItemSet = FlowSet(name="incoming_flows")
+        member_set: ItemSet = MemberSet(element_type="pool", subtype="")
+        assert isinstance(flow_set, FlowSet)
+        assert isinstance(member_set, MemberSet)

@@ -126,7 +126,9 @@ def _validate_rule_schema(rule: Dict[str, Any], navigator: BPMNHierarchyNavigato
     """Validate a single rule against database schema (fail-fast).
 
     Three-stage validation:
-    1. Table validation: Does element_type exist as a table name?
+    1. Table validation: Does element_type name something a rule can select?
+       - An element table, i.e. a table of the bpmn_element hierarchy
+       - A container table (bpmn_process, collaboration) — then no subtype is allowed
        - Special case: 'flow_object' is allowed even though it's not a real table
        - flow_object represents an abstract union of (activity, event, gateway)
 
@@ -144,6 +146,11 @@ def _validate_rule_schema(rule: Dict[str, Any], navigator: BPMNHierarchyNavigato
     - flow_object rules ignore subtype filtering (subtype is not validated)
     - The rule applies to ALL flow objects (activities, events, gateways)
     - Use flow_object for cross-cutting rules that apply uniformly to all element types
+
+    Why stage 1 asks for more than 'is this a table':
+    Selection runs over the bpmn_element hierarchy. A table outside it — a detail
+    table such as message_definition, say — would select nothing at all, and the rule
+    would report success without ever having looked at anything.
     """
     rule_id = str(rule["rule_id"])
     element_type = str(rule["element_type"])
@@ -157,11 +164,28 @@ def _validate_rule_schema(rule: Dict[str, Any], navigator: BPMNHierarchyNavigato
 
     schema = navigator.get_schema()
 
-    # Stage 1: Table validation (special case: 'flow_object' is allowed even though it's not a real table)
-    if element_type != "flow_object" and not schema.has_table(element_type):
-        log_and_raise(ValueError(
-            f"Rule '{rule_id}': element_type '{element_type}' is not a valid table name in schema"
-        ))
+    # Stage 1a: Container rules — selected by container table, never by subtype
+    if navigator.is_container_table(element_type):
+        if subtype:
+            log_and_raise(ValueError(
+                f"Rule '{rule_id}': container '{element_type}' has no subtype, "
+                f"but subtype '{subtype}' is set"
+            ))
+        return
+
+    # Stage 1b: Table validation (special case: 'flow_object' is allowed even though it's not a real table)
+    if element_type != "flow_object":
+        if not schema.has_table(element_type):
+            log_and_raise(ValueError(
+                f"Rule '{rule_id}': element_type '{element_type}' is not a valid table name in schema"
+            ))
+
+        if not navigator.is_element_table(element_type):
+            log_and_raise(ValueError(
+                f"Rule '{rule_id}': table '{element_type}' is neither part of the "
+                f"bpmn_element hierarchy nor a container, so the rule would select "
+                f"nothing. Containers are: {navigator.get_container_tables()}"
+            ))
 
     # Stage 2 & 3: Only if subtype is specified (exception: flow_object)
     if element_type != "flow_object" and subtype:

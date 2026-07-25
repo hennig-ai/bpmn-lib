@@ -40,8 +40,15 @@ def _make_engine(
     element_attrs: Dict[str, Dict[str, Any]] = None,
     outgoing_flows: Dict[str, List[OutgoingSequenceFlowInfo]] = None,
     incoming_flows: Dict[str, List[IncomingSequenceFlowInfo]] = None,
+    container_ids: Dict[str, List[str]] = None,
+    container_attrs: Dict[tuple, Dict[str, Any]] = None,
+    container_members: Dict[tuple, List[str]] = None,
 ) -> tuple:
-    """Create a BPMNRuleEngine with mocked navigator."""
+    """Create a BPMNRuleEngine with mocked navigator.
+
+    Container data is keyed by (container_table, container_id) because container IDs
+    live in their own ID space — a process '001' is not the element '001'.
+    """
     nav = Mock(spec=BPMNHierarchyNavigator)
     val_result = ValidationResult()
 
@@ -49,11 +56,22 @@ def _make_engine(
     element_attrs = element_attrs if element_attrs is not None else {}
     outgoing_flows = outgoing_flows if outgoing_flows is not None else {}
     incoming_flows = incoming_flows if incoming_flows is not None else {}
+    container_ids = container_ids if container_ids is not None else {}
+    container_attrs = container_attrs if container_attrs is not None else {}
+    container_members = container_members if container_members is not None else {}
 
     nav.get_element_ids_by_type.side_effect = lambda t: element_ids_by_type.get(t, [])
     nav.get_element_attribute.side_effect = lambda eid, attr: element_attrs.get(eid, {}).get(attr)
     nav.get_outgoing_sequence_flows.side_effect = lambda eid: outgoing_flows.get(eid, [])
     nav.get_incoming_sequence_flows.side_effect = lambda eid: incoming_flows.get(eid, [])
+
+    nav.is_container_table.side_effect = lambda t: t in container_ids
+    nav.get_container_tables.return_value = sorted(container_ids.keys())
+    nav.get_container_ids.side_effect = lambda t: container_ids.get(t, [])
+    nav.get_container_attribute.side_effect = (
+        lambda t, cid, attr: container_attrs.get((t, cid), {}).get(attr)
+    )
+    nav.get_container_members.side_effect = lambda t, cid: container_members.get((t, cid), [])
 
     engine = BPMNRuleEngine(nav, val_result)
     return engine, val_result
@@ -235,7 +253,7 @@ class TestApplyWhereClause:
 
     def test_none_returns_all(self):
         engine, _ = _make_engine()
-        result = engine._apply_where_clause(["e1", "e2"], None)
+        result = engine._apply_where_clause(["e1", "e2"], None, "")
         assert result == ["e1", "e2"]
 
     def test_where_equals_filters(self):
@@ -246,7 +264,7 @@ class TestApplyWhereClause:
             }
         )
         wc = WhereEquals(attribute_name="element_type", value="exclusiveGateway")
-        result = engine._apply_where_clause(["e1", "e2"], wc)
+        result = engine._apply_where_clause(["e1", "e2"], wc, "")
         assert result == ["e1"]
 
     def test_where_not_in_filters(self):
@@ -258,7 +276,7 @@ class TestApplyWhereClause:
             }
         )
         wc = WhereNotIn(attribute_name="element_type", values=["startEvent", "endEvent"])
-        result = engine._apply_where_clause(["e1", "e2", "e3"], wc)
+        result = engine._apply_where_clause(["e1", "e2", "e3"], wc, "")
         assert result == ["e2"]
 
 
@@ -520,6 +538,151 @@ class TestSelectElements:
         )
         result = engine._select_elements("event", "start")
         assert result == ["e1"]
+
+
+class TestContainerRules:
+    """Rules targeting bpmn_process or collaboration instead of a bpmn_element."""
+
+    def _engine_with_two_processes(self, start_events_of_002: list) -> tuple:
+        """Process 001 has a start event, process 002 has whatever is passed in."""
+        return _make_engine(
+            element_ids_by_type={"event": ["001", "039"] + start_events_of_002},
+            element_attrs={
+                "001": {"event_type": "start"},
+                "039": {"event_type": "end"},
+                **{eid: {"event_type": "start"} for eid in start_events_of_002},
+            },
+            container_ids={"bpmn_process": ["001", "002"]},
+            container_attrs={
+                ("bpmn_process", "001"): {"is_executable": "true"},
+                ("bpmn_process", "002"): {"is_executable": "true"},
+            },
+            container_members={
+                ("bpmn_process", "001"): ["001"],
+                ("bpmn_process", "002"): ["039"] + start_events_of_002,
+            },
+        )
+
+    def test_member_count_passes_when_every_process_has_a_start_event(self):
+        engine, val_result = self._engine_with_two_processes(["040"])
+        store = _make_rule_store([{
+            "rule_id": "PRC-001", "element_type": "bpmn_process",
+            "assertion": "COUNT(elements OF event.start) >= 1",
+            "where_clause": "is_executable == true",
+            "level": "spec_v2", "message_template": "Process {element_id} has no start event",
+        }])
+
+        engine.validate(store, "spec_v2")
+
+        assert val_result.count() == 0
+
+    def test_member_count_reports_the_container_that_lacks_one(self):
+        engine, val_result = self._engine_with_two_processes([])
+        store = _make_rule_store([{
+            "rule_id": "PRC-001", "element_type": "bpmn_process",
+            "assertion": "COUNT(elements OF event.start) >= 1",
+            "where_clause": "is_executable == true",
+            "level": "spec_v2", "message_template": "Process {element_id} has no start event",
+        }])
+
+        engine.validate(store, "spec_v2")
+
+        assert val_result.count() == 1
+        assert val_result.get_messages()[0] == "Process 002 has no start event"
+
+    def test_where_clause_reads_the_container_attribute(self):
+        """A non-executable process is filtered out before the assertion runs."""
+        engine, val_result = _make_engine(
+            element_ids_by_type={"event": []},
+            container_ids={"bpmn_process": ["002"]},
+            container_attrs={("bpmn_process", "002"): {"is_executable": "false"}},
+            container_members={("bpmn_process", "002"): []},
+        )
+        store = _make_rule_store([{
+            "rule_id": "PRC-001", "element_type": "bpmn_process",
+            "assertion": "COUNT(elements OF event.start) >= 1",
+            "where_clause": "is_executable == true",
+            "level": "spec_v2", "message_template": "Process {element_id} has no start event",
+        }])
+
+        engine.validate(store, "spec_v2")
+
+        assert val_result.count() == 0
+
+    def test_members_are_filtered_by_type(self):
+        """Only members of the requested type count, not every member."""
+        engine, val_result = _make_engine(
+            element_ids_by_type={"pool": ["025"]},
+            container_ids={"collaboration": ["001"]},
+            container_members={("collaboration", "001"): ["025", "036"]},
+        )
+        store = _make_rule_store([{
+            "rule_id": "COL-001", "element_type": "collaboration",
+            "assertion": "COUNT(elements OF pool) >= 2", "where_clause": "",
+            "level": "best_practice",
+            "message_template": "Collaboration {element_id} has fewer than two participants",
+        }])
+
+        engine.validate(store, "best_practice")
+
+        assert val_result.count() == 1
+        assert "Collaboration 001" in val_result.get_messages()[0]
+
+    def test_flow_set_on_a_container_raises(self):
+        engine, _ = _make_engine(
+            container_ids={"collaboration": ["001"]},
+        )
+        store = _make_rule_store([{
+            "rule_id": "BAD-001", "element_type": "collaboration",
+            "assertion": "COUNT(incoming_flows) == 0", "where_clause": "",
+            "level": "spec_v2", "message_template": "m",
+        }])
+
+        with pytest.raises(Exception, match="not available on container"):
+            engine.validate(store, "spec_v2")
+
+    def test_member_set_on_an_element_raises(self):
+        engine, _ = _make_engine(element_ids_by_type={"pool": ["025"]})
+        store = _make_rule_store([{
+            "rule_id": "BAD-002", "element_type": "pool",
+            "assertion": "COUNT(elements OF lane) >= 1", "where_clause": "",
+            "level": "spec_v2", "message_template": "m",
+        }])
+
+        with pytest.raises(Exception, match="only available on a container"):
+            engine.validate(store, "spec_v2")
+
+    def test_resolver_on_a_container_raises(self):
+        """Container IDs live in a separate ID space — a resolver would hit the wrong row."""
+        engine, _ = _make_engine(container_ids={"bpmn_process": ["001"]})
+        store = _make_rule_store([{
+            "rule_id": "BAD-003", "element_type": "bpmn_process",
+            "assertion": "ASSERT PROCESS_OF(self) == null", "where_clause": "",
+            "level": "spec_v2", "message_template": "m",
+        }])
+
+        with pytest.raises(Exception, match="expects a bpmn_element"):
+            engine.validate(store, "spec_v2")
+
+    def test_element_assertion_on_a_container_reads_its_own_column(self):
+        """ASSERT works on containers — only the resolvers are off limits."""
+        engine, val_result = _make_engine(
+            container_ids={"bpmn_process": ["001", "002"]},
+            container_attrs={
+                ("bpmn_process", "001"): {"name": "Invoice"},
+                ("bpmn_process", "002"): {"name": ""},
+            },
+        )
+        store = _make_rule_store([{
+            "rule_id": "PRC-900", "element_type": "bpmn_process",
+            "assertion": 'ASSERT name != ""', "where_clause": "",
+            "level": "spec_v2", "message_template": "Process {element_id} has no name",
+        }])
+
+        engine.validate(store, "spec_v2")
+
+        assert val_result.count() == 1
+        assert val_result.get_messages()[0] == "Process 002 has no name"
 
 
 class TestValidateEndToEnd:

@@ -81,6 +81,9 @@ def _make_engine(
     navigator.get_process_of_element.side_effect = lambda eid: process_map.get(eid)
     navigator.get_outgoing_sequence_flows.side_effect = lambda eid: []
     navigator.get_incoming_sequence_flows.side_effect = lambda eid: []
+    # These rules all target elements, never containers
+    navigator.is_container_table.side_effect = lambda table_name: False
+    navigator.get_container_tables.return_value = []
 
     return BPMNRuleEngine(navigator, val_result), val_result
 
