@@ -132,11 +132,19 @@ class TestParseAssertionElement:
 
     def test_or_combinator_with_resolvers(self):
         result = self.parser.parse_assertion(
-            "ASSERT POOL_COUNT() < 2 OR POOL_MESSAGE_FLOW_COUNT(self) >= 1"
+            "ASSERT COLLABORATION_POOL_COUNT(self) < 2 OR POOL_MESSAGE_FLOW_COUNT(self) >= 1"
         )
         assert result.check.combinator == "OR"
-        assert result.check.terms[0].left == ResolverOperand(function="POOL_COUNT", argument="")
+        assert result.check.terms[0].left == ResolverOperand(
+            function="COLLABORATION_POOL_COUNT", argument="self"
+        )
         assert result.check.terms[0].right == LiteralOperand(value=2)
+
+    def test_attached_reference_is_accepted(self):
+        result = self.parser.parse_assertion("ASSERT PROCESS_OF(self) == PROCESS_OF(attached)")
+        assert result.check.terms[0].right == ResolverOperand(
+            function="PROCESS_OF", argument="attached"
+        )
 
     def test_resolver_inside_for_each(self):
         result = self.parser.parse_assertion(
@@ -155,9 +163,9 @@ class TestParseAssertionElement:
         with pytest.raises(ValueError):
             self.parser.parse_assertion("ASSERT POOL_OF(neighbour) != null")
 
-    def test_argument_for_argless_resolver_raises(self):
+    def test_missing_argument_raises(self):
         with pytest.raises(ValueError):
-            self.parser.parse_assertion("ASSERT POOL_COUNT(self) < 2")
+            self.parser.parse_assertion("ASSERT COLLABORATION_POOL_COUNT() < 2")
 
     def test_in_without_value_list_raises(self):
         with pytest.raises(ValueError):

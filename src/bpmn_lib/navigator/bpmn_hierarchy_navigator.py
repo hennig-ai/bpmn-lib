@@ -942,7 +942,11 @@ class BPMNHierarchyNavigator:
 
         return self.get_message_definition(s_message_definition_id)
 
-    def get_pool_of_element(self, bpmn_element_id: Union[str, int]) -> Optional[str]:
+    def get_pool_of_element(
+        self,
+        bpmn_element_id: Union[str, int],
+        collaboration_id: Optional[str] = None,
+    ) -> Optional[str]:
         """
         Gibt die bpmn_element_id des Pools zurueck, zu dem ein Element gehoert.
 
@@ -955,9 +959,17 @@ class BPMNHierarchyNavigator:
         Diese Methode ist die Grundlage fuer die Regel, dass Message Flows nur
         zwischen verschiedenen Pools verlaufen duerfen.
 
+        Der Weg ueber den Prozess ist seit Schema v4.1 nicht mehr zwangslaeufig
+        eindeutig: Zwei Pools verschiedener Kollaborationen duerfen denselben Prozess
+        referenzieren - derselbe Prozess in zwei Teilnehmerrollen. Ohne
+        collaboration_id ist die Zuordnung dann mehrdeutig und die Methode bricht ab,
+        statt still den erstbesten Pool zu liefern.
+
         Args:
             bpmn_element_id: ID des Elements (int oder str).
                              Bei int wird automatisch auf 3 Stellen formatiert
+            collaboration_id: Schraenkt Weg 3 auf die Pools einer Kollaboration ein.
+                              None bedeutet: keine Einschraenkung
 
         Returns:
             bpmn_element_id des Pools.
@@ -965,7 +977,8 @@ class BPMNHierarchyNavigator:
             (z.B. Modelle ohne Pools)
 
         Raises:
-            ValueError: Wenn eine in lane_element referenzierte Lane fehlt
+            ValueError: Wenn eine in lane_element referenzierte Lane fehlt oder
+                        die Zuordnung ueber den Prozess mehrdeutig ist
         """
         s_bpmn_element_id = self._format_db_internal_id(bpmn_element_id)
 
@@ -979,11 +992,19 @@ class BPMNHierarchyNavigator:
             return s_pool_id
 
         # 3. Zugehoerigkeit ueber den Prozess
-        s_pool_id = self._get_pool_via_process(s_bpmn_element_id)
-        if s_pool_id != "":
-            return s_pool_id
+        candidates = self._get_pools_via_process(s_bpmn_element_id, collaboration_id)
 
-        return None
+        if len(candidates) == 0:
+            return None
+
+        if len(candidates) > 1:
+            log_and_raise(ValueError(
+                f"Pool von Element '{s_bpmn_element_id}' ist mehrdeutig: die Pools "
+                f"{candidates} referenzieren denselben Prozess. Eine collaboration_id "
+                f"ist noetig, um den Teilnehmer zu bestimmen"
+            ))
+
+        return candidates[0]
 
     def _get_pool_via_lane(self, s_bpmn_element_id: str) -> str:
         """Ermittelt den Pool eines Elements ueber dessen Lane-Zuordnung."""
@@ -1010,8 +1031,48 @@ class BPMNHierarchyNavigator:
         # lane.pool_id referenziert pool.bpmn_element_id (nicht pool.pool_id)
         return lane_iterator.value("pool_id")
 
-    def _get_pool_via_process(self, s_bpmn_element_id: str) -> str:
-        """Ermittelt den Pool eines Elements ueber den Prozess, dem es angehoert."""
+    def _get_pools_via_process(
+        self, s_bpmn_element_id: str, collaboration_id: Optional[str]
+    ) -> List[str]:
+        """Ermittelt alle Pools, die den Prozess des Elements referenzieren.
+
+        Bei gesetzter collaboration_id bleiben nur die Pools dieser Kollaboration
+        uebrig. Mehr als ein Treffer bedeutet, dass die Zuordnung mehrdeutig ist.
+        """
+        s_bpmn_process_id = self.get_process_of_element(s_bpmn_element_id)
+
+        if s_bpmn_process_id is None:
+            return []
+
+        pool_table = self.m_database.get_table(TBL_POOL)
+        pool_condition = ConditionEquals("bpmn_process_id", s_bpmn_process_id)
+        pool_iterator = pool_table.create_iterator(True, pool_condition)
+
+        pool_ids: List[str] = []
+        while not pool_iterator.is_empty():
+            if collaboration_id is None or pool_iterator.value("collaboration_id") == collaboration_id:
+                pool_ids.append(pool_iterator.value("bpmn_element_id"))
+            pool_iterator.pp()
+
+        return pool_ids
+
+    def get_process_of_element(self, bpmn_element_id: Union[str, int]) -> Optional[str]:
+        """
+        Gibt die bpmn_process_id des Prozesses zurueck, dem ein Element angehoert.
+
+        Seit Schema v4.1 haben Pools und Message Flows bewusst keinen Eintrag in
+        process_element - sie gehoeren zu einer Kollaboration. Fuer sie liefert diese
+        Methode None.
+
+        Args:
+            bpmn_element_id: ID des Elements (int oder str).
+                             Bei int wird automatisch auf 3 Stellen formatiert
+
+        Returns:
+            bpmn_process_id oder None, wenn das Element keinem Prozess angehoert
+        """
+        s_bpmn_element_id = self._format_db_internal_id(bpmn_element_id)
+
         # get_table() raises via log_and_raise() if table doesn't exist
         process_element_table = self.m_database.get_table(TBL_PROCESS_ELEMENT)
 
@@ -1019,18 +1080,45 @@ class BPMNHierarchyNavigator:
         iterator = process_element_table.create_iterator(True, condition)
 
         if iterator.is_empty():
-            return ""
+            return None
 
-        s_bpmn_process_id = iterator.value("bpmn_process_id")
+        return iterator.value("bpmn_process_id")
 
-        pool_table = self.m_database.get_table(TBL_POOL)
-        pool_condition = ConditionEquals("bpmn_process_id", s_bpmn_process_id)
-        pool_iterator = pool_table.create_iterator(True, pool_condition)
+    def get_collaboration_of_element(self, bpmn_element_id: Union[str, int]) -> Optional[str]:
+        """
+        Gibt die collaboration_id der Kollaboration zurueck, an der ein Element teilnimmt.
 
-        if pool_iterator.is_empty():
-            return ""
+        Ein Element nimmt ueber seinen Pool an einer Kollaboration teil: Der Pool traegt
+        die collaboration_id, das Element selbst nicht. Ein Message Flow traegt sie
+        dagegen selbst, gehoert aber zu keinem Pool - er wird deshalb direkt gelesen.
 
-        return pool_iterator.value("bpmn_element_id")
+        Args:
+            bpmn_element_id: ID des Elements (int oder str).
+                             Bei int wird automatisch auf 3 Stellen formatiert
+
+        Returns:
+            collaboration_id oder None, wenn das Element zu keinem Pool gehoert
+        """
+        s_bpmn_element_id = self._format_db_internal_id(bpmn_element_id)
+
+        if self.is_element_descendant_of(s_bpmn_element_id, TBL_MESSAGE_FLOW):
+            return self._read_collaboration_id(s_bpmn_element_id)
+
+        # Alle uebrigen Elemente erben die Kollaboration von ihrem Pool
+        s_pool_id = self.get_pool_of_element(s_bpmn_element_id)
+        if s_pool_id is None:
+            return None
+
+        return self._read_collaboration_id(s_pool_id)
+
+    def _read_collaboration_id(self, s_bpmn_element_id: str) -> Optional[str]:
+        """Liest collaboration_id eines Elements, das die Spalte selbst traegt."""
+        s_collaboration_id = self.get_element_attribute(s_bpmn_element_id, "collaboration_id")
+
+        if s_collaboration_id is None or str(s_collaboration_id).strip() == "":
+            return None
+
+        return str(s_collaboration_id)
 
     def get_data_inputs(self, bpmn_element_id: Union[str, int]) -> Optional[List[str]]:
         """

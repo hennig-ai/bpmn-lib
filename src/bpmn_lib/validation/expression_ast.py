@@ -10,13 +10,16 @@ from typing import Any, Dict, List, Optional, Union
 RESOLVER_ARITY: Dict[str, int] = {
     "POOL_OF": 1,
     "TYPE_OF": 1,
+    "PROCESS_OF": 1,
+    "COLLABORATION_OF": 1,
     "EXPECTED_MESSAGE_OF": 1,
     "POOL_MESSAGE_FLOW_COUNT": 1,
-    "POOL_COUNT": 0,
+    "COLLABORATION_POOL_COUNT": 1,
 }
 
 # Element references accepted as a resolver argument.
-RESOLVER_ARGUMENTS: List[str] = ["self", "source", "target"]
+# 'attached' is the activity a boundary event is attached to.
+RESOLVER_ARGUMENTS: List[str] = ["self", "source", "target", "attached"]
 
 
 @dataclass(frozen=True)

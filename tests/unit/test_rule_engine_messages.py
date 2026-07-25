@@ -51,6 +51,8 @@ def _make_engine(
     message_event_definitions: Optional[Dict[str, List[MessageEventDefinitionInfo]]] = None,
     expected_messages: Optional[Dict[str, MessageDefinitionInfo]] = None,
     pools: Optional[Dict[str, Optional[str]]] = None,
+    collaborations: Optional[Dict[str, Optional[str]]] = None,
+    processes: Optional[Dict[str, Optional[str]]] = None,
 ) -> Tuple[BPMNRuleEngine, ValidationResult]:
     """Create a BPMNRuleEngine with a navigator mock covering the message API."""
     navigator = Mock(spec=BPMNHierarchyNavigator)
@@ -63,6 +65,8 @@ def _make_engine(
     definitions = message_event_definitions if message_event_definitions is not None else {}
     expected = expected_messages if expected_messages is not None else {}
     pool_map = pools if pools is not None else {}
+    collaboration_map = collaborations if collaborations is not None else {}
+    process_map = processes if processes is not None else {}
 
     navigator.get_element_ids_by_type.side_effect = lambda t: ids_by_type.get(t, [])
     navigator.get_element_attribute.side_effect = lambda eid, attr: attrs.get(eid, {}).get(attr)
@@ -70,7 +74,11 @@ def _make_engine(
     navigator.get_incoming_message_flows.side_effect = lambda eid: incoming.get(eid, [])
     navigator.get_message_event_definitions.side_effect = lambda eid: definitions.get(eid, [])
     navigator.get_message_definition_for_event.side_effect = lambda eid: expected.get(eid)
-    navigator.get_pool_of_element.side_effect = lambda eid: pool_map.get(eid)
+    navigator.get_pool_of_element.side_effect = (
+        lambda eid, collaboration_id=None: pool_map.get(eid)
+    )
+    navigator.get_collaboration_of_element.side_effect = lambda eid: collaboration_map.get(eid)
+    navigator.get_process_of_element.side_effect = lambda eid: process_map.get(eid)
     navigator.get_outgoing_sequence_flows.side_effect = lambda eid: []
     navigator.get_incoming_sequence_flows.side_effect = lambda eid: []
 
@@ -302,22 +310,24 @@ class TestExpectedMessageResolver:
 # ==================== Pool resolvers ====================
 
 class TestPoolResolvers:
-    """Test POOL_COUNT and POOL_MESSAGE_FLOW_COUNT."""
+    """Test COLLABORATION_POOL_COUNT and POOL_MESSAGE_FLOW_COUNT."""
 
     def _engine(self, pool_ids: List[str], flow_attrs: Dict[str, Dict[str, Any]],
-                pools: Dict[str, Optional[str]]):
-        attrs: Dict[str, Dict[str, Any]] = dict(flow_attrs)
+                pools: Dict[str, Optional[str]], collaborations: Dict[str, Optional[str]]):
         return _make_engine(
             element_ids_by_type={"pool": pool_ids, "message_flow": sorted(flow_attrs.keys())},
-            element_attrs=attrs,
+            element_attrs=dict(flow_attrs),
             pools=pools,
+            collaborations=collaborations,
         )
 
-    _ASSERTION = "ASSERT POOL_COUNT() < 2 OR POOL_MESSAGE_FLOW_COUNT(self) >= 1"
+    _ASSERTION = "ASSERT COLLABORATION_POOL_COUNT(self) < 2 OR POOL_MESSAGE_FLOW_COUNT(self) >= 1"
 
-    def test_single_pool_is_never_reported(self):
-        """A one-participant model legitimately has no message flows."""
-        engine, result = self._engine(["025"], {}, {})
+    _FLOW_036 = {"036": {"source_bpmn_element_id": "003", "target_bpmn_element_id": "038"}}
+
+    def test_lone_participant_is_never_reported(self):
+        """A one-participant collaboration legitimately has no message flows."""
+        engine, result = self._engine(["025"], {}, {}, {"025": "001"})
 
         _run(engine, {"element_type": "pool", "assertion": self._ASSERTION}, "best_practice")
 
@@ -326,8 +336,9 @@ class TestPoolResolvers:
     def test_participating_pool_passes(self):
         engine, result = self._engine(
             ["025", "038"],
-            {"036": {"source_bpmn_element_id": "003", "target_bpmn_element_id": "038"}},
+            self._FLOW_036,
             {"003": "025", "038": "038"},
+            {"025": "001", "038": "001", "036": "001"},
         )
 
         _run(engine, {"element_type": "pool", "assertion": self._ASSERTION}, "best_practice")
@@ -337,8 +348,9 @@ class TestPoolResolvers:
     def test_isolated_pool_is_reported(self):
         engine, result = self._engine(
             ["025", "038", "045"],
-            {"036": {"source_bpmn_element_id": "003", "target_bpmn_element_id": "038"}},
+            self._FLOW_036,
             {"003": "025", "038": "038"},
+            {"025": "001", "038": "001", "045": "001", "036": "001"},
         )
 
         _run(engine, {"element_type": "pool", "assertion": self._ASSERTION}, "best_practice")
@@ -351,6 +363,24 @@ class TestPoolResolvers:
             ["025", "038"],
             {"044": {"source_bpmn_element_id": "040", "target_bpmn_element_id": "002"}},
             {"040": "038", "002": "025"},
+            {"025": "001", "038": "001", "044": "001"},
+        )
+
+        _run(engine, {"element_type": "pool", "assertion": self._ASSERTION}, "best_practice")
+
+        assert result.get_messages() == []
+
+    def test_count_is_scoped_to_the_own_collaboration(self):
+        """Schema v4.1: a lone participant of a second collaboration must stay unreported.
+
+        A model-wide pool count would flag pool 060 here, because the model has three
+        pools — but its own collaboration has only one participant.
+        """
+        engine, result = self._engine(
+            ["025", "038", "060"],
+            self._FLOW_036,
+            {"003": "025", "038": "038"},
+            {"025": "001", "038": "001", "060": "002", "036": "001"},
         )
 
         _run(engine, {"element_type": "pool", "assertion": self._ASSERTION}, "best_practice")
@@ -393,6 +423,135 @@ class TestElementReferences:
                 "where_clause": "event_definition_type == message",
                 "assertion": 'FOR_EACH incoming_message_flows: POOL_OF(target) == "038"',
             })
+
+
+# ==================== Boundary events and containment ====================
+
+class TestBoundaryAndContainmentResolvers:
+    """Test the resolvers the v4.1 rules need: 'attached', PROCESS_OF, COLLABORATION_OF."""
+
+    def _boundary_engine(self, attached_to: Optional[str], attached_type: str,
+                         processes: Dict[str, Optional[str]]):
+        return _make_engine(
+            element_ids_by_type={"event": ["037"]},
+            element_attrs={
+                "037": {"event_type": "boundary", "attached_to_bpmn_element_id": attached_to},
+                "003": {"element_type": attached_type},
+            },
+            processes=processes,
+        )
+
+    _ACTIVITY_TYPES = "(service_task, user_task, script_task, business_rule_task, subprocess, call_activity)"
+
+    def test_attached_resolves_to_the_activity(self):
+        engine, result = self._boundary_engine("003", "user_task", {})
+
+        _run(engine, {
+            "element_type": "event",
+            "subtype": "boundary",
+            "assertion": f"ASSERT TYPE_OF(attached) IN {self._ACTIVITY_TYPES}",
+        })
+
+        assert result.get_messages() == []
+
+    def test_attachment_to_a_gateway_is_reported(self):
+        engine, result = self._boundary_engine("003", "gateway", {})
+
+        _run(engine, {
+            "element_type": "event",
+            "subtype": "boundary",
+            "assertion": f"ASSERT TYPE_OF(attached) IN {self._ACTIVITY_TYPES}",
+        })
+
+        assert result.get_messages() == ["violated 037 "]
+
+    def test_missing_attachment_is_left_to_the_dedicated_rule(self):
+        """An unset reference resolves to nothing, so the type check stays silent."""
+        engine, result = self._boundary_engine(None, "user_task", {})
+
+        _run(engine, {
+            "element_type": "event",
+            "subtype": "boundary",
+            "assertion": (
+                'ASSERT attached_to_bpmn_element_id == null '
+                'OR attached_to_bpmn_element_id == "" '
+                f"OR TYPE_OF(attached) IN {self._ACTIVITY_TYPES}"
+            ),
+        })
+
+        assert result.get_messages() == []
+
+    def test_process_of_compares_boundary_and_activity(self):
+        engine, result = self._boundary_engine("003", "user_task", {"037": "001", "003": "002"})
+
+        _run(engine, {
+            "element_type": "event",
+            "subtype": "boundary",
+            "assertion": "ASSERT PROCESS_OF(self) == PROCESS_OF(attached)",
+        })
+
+        assert result.get_messages() == ["violated 037 "]
+
+    def test_same_process_passes(self):
+        engine, result = self._boundary_engine("003", "user_task", {"037": "001", "003": "001"})
+
+        _run(engine, {
+            "element_type": "event",
+            "subtype": "boundary",
+            "assertion": "ASSERT PROCESS_OF(self) == PROCESS_OF(attached)",
+        })
+
+        assert result.get_messages() == []
+
+    def test_containment_rule_reports_a_pool_inside_a_process(self):
+        engine, result = _make_engine(
+            element_ids_by_type={"pool": ["038"]},
+            processes={"038": "002"},
+        )
+
+        _run(engine, {"element_type": "pool", "assertion": "ASSERT PROCESS_OF(self) == null"})
+
+        assert result.get_messages() == ["violated 038 "]
+
+    def test_message_flow_outside_its_collaboration_is_reported(self):
+        engine, result = _make_engine(
+            element_ids_by_type={"message_flow": ["036"]},
+            element_attrs={
+                "036": {"collaboration_id": "001", "source_bpmn_element_id": "003",
+                        "target_bpmn_element_id": "038"},
+            },
+            collaborations={"036": "001", "003": "001", "038": "002"},
+        )
+
+        _run(engine, {
+            "element_type": "message_flow",
+            "assertion": (
+                "ASSERT collaboration_id == COLLABORATION_OF(source) "
+                "AND collaboration_id == COLLABORATION_OF(target)"
+            ),
+        })
+
+        assert result.get_messages() == ["violated 036 "]
+
+    def test_message_flow_inside_its_collaboration_passes(self):
+        engine, result = _make_engine(
+            element_ids_by_type={"message_flow": ["036"]},
+            element_attrs={
+                "036": {"collaboration_id": "001", "source_bpmn_element_id": "003",
+                        "target_bpmn_element_id": "038"},
+            },
+            collaborations={"036": "001", "003": "001", "038": "001"},
+        )
+
+        _run(engine, {
+            "element_type": "message_flow",
+            "assertion": (
+                "ASSERT collaboration_id == COLLABORATION_OF(source) "
+                "AND collaboration_id == COLLABORATION_OF(target)"
+            ),
+        })
+
+        assert result.get_messages() == []
 
 
 # ==================== COUNT over message flows ====================

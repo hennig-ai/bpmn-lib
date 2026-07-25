@@ -318,38 +318,62 @@ class BPMNRuleEngine:
 
     def _call_resolver(self, context: _EvaluationContext, resolver: ResolverOperand) -> Any:
         """Execute a resolver function via the navigator."""
-        if resolver.function == "POOL_COUNT":
-            return len(self._navigator.get_element_ids_by_type(TBL_POOL))
-
         element_id = self._resolve_element_reference(context, resolver.argument)
 
+        # An empty reference (e.g. a boundary event without attachment) resolves to
+        # nothing. Reporting that is another rule's job, so stay quiet here.
+        if element_id == "":
+            return None
+
         if resolver.function == "POOL_OF":
-            return self._navigator.get_pool_of_element(element_id)
+            return self._navigator.get_pool_of_element(
+                element_id, self._collaboration_scope(context)
+            )
         if resolver.function == "TYPE_OF":
             return self._navigator.get_element_attribute(element_id, "element_type")
+        if resolver.function == "PROCESS_OF":
+            return self._navigator.get_process_of_element(element_id)
+        if resolver.function == "COLLABORATION_OF":
+            return self._navigator.get_collaboration_of_element(element_id)
         if resolver.function == "EXPECTED_MESSAGE_OF":
             definition = self._navigator.get_message_definition_for_event(element_id)
             return None if definition is None else definition.message_definition_id
         if resolver.function == "POOL_MESSAGE_FLOW_COUNT":
             return self._count_message_flows_of_pool(element_id)
+        if resolver.function == "COLLABORATION_POOL_COUNT":
+            return self._count_pools_in_collaboration_of(element_id)
 
         log_and_raise(ValueError(f"Resolver '{resolver.function}' is not implemented"))
 
+    def _collaboration_scope(self, context: _EvaluationContext) -> Optional[str]:
+        """Collaboration that scopes pool resolution for the current element.
+
+        Since schema v4.1 two pools of different collaborations may reference the same
+        process. Whenever the selected element names a collaboration — a message flow
+        does — that name disambiguates which participant an element belongs to.
+        """
+        return self._navigator.get_collaboration_of_element(context.element_id)
+
     def _resolve_element_reference(self, context: _EvaluationContext, reference: str) -> str:
-        """Resolve 'self', 'source' or 'target' to a concrete element ID.
+        """Resolve 'self', 'source', 'target' or 'attached' to a concrete element ID.
 
         Inside FOR_EACH/EXISTS, source and target refer to the ends of the current
         flow; in an ASSERT they refer to the ends of the selected element itself.
+        'attached' always refers to the activity the selected event is attached to.
+        Returns an empty string when the reference is not set on the element.
         """
         if reference == "self":
             return context.element_id
+
+        if reference == "attached":
+            return self._read_reference_column(context.element_id, "attached_to_bpmn_element_id")
 
         if reference not in ("source", "target"):
             log_and_raise(ValueError(f"Unknown element reference: '{reference}'"))
 
         if context.flow_info is None:
             column = "source_bpmn_element_id" if reference == "source" else "target_bpmn_element_id"
-            return self._navigator.get_element_attribute(context.element_id, column)
+            return self._read_reference_column(context.element_id, column)
 
         attribute = "source_element_id" if reference == "source" else "target_element_id"
         if not hasattr(context.flow_info, attribute):
@@ -359,15 +383,42 @@ class BPMNRuleEngine:
             ))
         return getattr(context.flow_info, attribute)
 
+    def _read_reference_column(self, element_id: str, column: str) -> str:
+        """Read an element reference column, normalising 'not set' to an empty string."""
+        value = self._navigator.get_element_attribute(element_id, column)
+
+        if value is None:
+            return ""
+
+        return str(value).strip()
+
     def _count_message_flows_of_pool(self, pool_element_id: str) -> int:
-        """Count message flows with at least one end belonging to the given pool."""
+        """Count message flows with at least one end belonging to the given pool.
+
+        Each flow scopes the pool lookup with its own collaboration, so a process
+        carried by two participants does not make the membership ambiguous.
+        """
         count = 0
         for flow_id in self._navigator.get_element_ids_by_type(TBL_MESSAGE_FLOW):
+            collaboration_id = self._navigator.get_collaboration_of_element(flow_id)
             source_id = self._navigator.get_element_attribute(flow_id, "source_bpmn_element_id")
             target_id = self._navigator.get_element_attribute(flow_id, "target_bpmn_element_id")
-            if self._navigator.get_pool_of_element(source_id) == pool_element_id:
+            if self._navigator.get_pool_of_element(source_id, collaboration_id) == pool_element_id:
                 count += 1
-            elif self._navigator.get_pool_of_element(target_id) == pool_element_id:
+            elif self._navigator.get_pool_of_element(target_id, collaboration_id) == pool_element_id:
+                count += 1
+        return count
+
+    def _count_pools_in_collaboration_of(self, element_id: str) -> int:
+        """Count the participants of the collaboration the given element belongs to."""
+        collaboration_id = self._navigator.get_collaboration_of_element(element_id)
+
+        if collaboration_id is None:
+            return 0
+
+        count = 0
+        for pool_id in self._navigator.get_element_ids_by_type(TBL_POOL):
+            if self._navigator.get_collaboration_of_element(pool_id) == collaboration_id:
                 count += 1
         return count
 

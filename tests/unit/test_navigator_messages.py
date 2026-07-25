@@ -51,6 +51,8 @@ def _make_navigator(
     tables: Dict[str, List[Dict[str, Any]]],
     pool_element_ids: Optional[List[str]] = None,
     event_ids: Optional[Dict[str, str]] = None,
+    message_flow_element_ids: Optional[List[str]] = None,
+    element_attrs: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> BPMNHierarchyNavigator:
     """Create a navigator mock with real methods bound and mock tables behind it.
 
@@ -58,6 +60,8 @@ def _make_navigator(
         tables: Table name -> list of row dicts
         pool_element_ids: Element IDs for which is_element_descendant_of(id, "pool") is True
         event_ids: bpmn_element_id -> event_id, as _get_record_id_in_table would resolve
+        message_flow_element_ids: Element IDs that are message flows
+        element_attrs: Element ID -> attributes, as get_element_attribute would return
     """
     navigator = Mock(spec=BPMNHierarchyNavigator)
 
@@ -84,8 +88,20 @@ def _make_navigator(
     navigator.m_database = database
 
     resolved_pools = pool_element_ids if pool_element_ids is not None else []
-    navigator.is_element_descendant_of.side_effect = (
-        lambda element_id, table: table == "pool" and element_id in resolved_pools
+    resolved_message_flows = message_flow_element_ids if message_flow_element_ids is not None else []
+
+    def is_element_descendant_of(element_id: str, table: str) -> bool:
+        if table == "pool":
+            return element_id in resolved_pools
+        if table == "message_flow":
+            return element_id in resolved_message_flows
+        return False
+
+    navigator.is_element_descendant_of.side_effect = is_element_descendant_of
+
+    resolved_attrs = element_attrs if element_attrs is not None else {}
+    navigator.get_element_attribute.side_effect = (
+        lambda element_id, attribute: resolved_attrs.get(element_id, {}).get(attribute)
     )
 
     resolved_events = event_ids if event_ids is not None else {}
@@ -101,8 +117,11 @@ def _make_navigator(
         "get_message_event_definitions",
         "get_message_definition_for_event",
         "get_pool_of_element",
+        "get_process_of_element",
+        "get_collaboration_of_element",
+        "_read_collaboration_id",
         "_get_pool_via_lane",
-        "_get_pool_via_process",
+        "_get_pools_via_process",
         "_format_db_internal_id",
     ]:
         setattr(
@@ -408,3 +427,97 @@ class TestGetPoolOfElement:
         })
 
         assert navigator.get_pool_of_element(3) == "025"
+
+
+class TestPoolResolutionAcrossCollaborations:
+    """Schema v4.1: two pools of different collaborations may carry the same process."""
+
+    def _navigator(self) -> BPMNHierarchyNavigator:
+        return _make_navigator({
+            "lane_element": [],
+            "lane": [],
+            "process_element": [{"process_element_id": "001", "bpmn_process_id": "002",
+                                 "bpmn_element_id": "040"}],
+            "pool": [
+                {"pool_id": "002", "bpmn_element_id": "038", "collaboration_id": "001",
+                 "bpmn_process_id": "002"},
+                {"pool_id": "003", "bpmn_element_id": "047", "collaboration_id": "002",
+                 "bpmn_process_id": "002"},
+            ],
+        })
+
+    def test_ambiguous_membership_raises(self):
+        """Silently picking the first pool would corrupt every pool-based rule."""
+        with pytest.raises(Exception):
+            self._navigator().get_pool_of_element("040")
+
+    def test_collaboration_scope_resolves_the_ambiguity(self):
+        navigator = self._navigator()
+
+        assert navigator.get_pool_of_element("040", "001") == "038"
+        assert navigator.get_pool_of_element("040", "002") == "047"
+
+    def test_scope_without_matching_pool_returns_none(self):
+        assert self._navigator().get_pool_of_element("040", "003") is None
+
+
+class TestGetProcessOfElement:
+    """Test get_process_of_element."""
+
+    def test_returns_the_process(self):
+        navigator = _make_navigator({
+            "process_element": [{"process_element_id": "001", "bpmn_process_id": "001",
+                                 "bpmn_element_id": "003"}],
+        })
+
+        assert navigator.get_process_of_element("003") == "001"
+
+    def test_element_without_process_returns_none(self):
+        """Pools and message flows have no process_element row since schema v4.1."""
+        navigator = _make_navigator({"process_element": []})
+
+        assert navigator.get_process_of_element("038") is None
+
+
+class TestGetCollaborationOfElement:
+    """Test get_collaboration_of_element."""
+
+    def test_message_flow_carries_the_collaboration_itself(self):
+        navigator = _make_navigator(
+            tables={},
+            message_flow_element_ids=["036"],
+            element_attrs={"036": {"collaboration_id": "001"}},
+        )
+
+        assert navigator.get_collaboration_of_element("036") == "001"
+
+    def test_element_inherits_the_collaboration_from_its_pool(self):
+        navigator = _make_navigator(
+            tables={
+                "lane_element": [{"lane_element_id": "001", "lane_bpmn_element_id": "026",
+                                  "bpmn_element_id": "003"}],
+                "lane": [{"lane_id": "001", "bpmn_element_id": "026", "pool_id": "025"}],
+            },
+            element_attrs={"025": {"collaboration_id": "001"}},
+        )
+
+        assert navigator.get_collaboration_of_element("003") == "001"
+
+    def test_pool_reports_its_own_collaboration(self):
+        navigator = _make_navigator(
+            tables={},
+            pool_element_ids=["025"],
+            element_attrs={"025": {"collaboration_id": "001"}},
+        )
+
+        assert navigator.get_collaboration_of_element("025") == "001"
+
+    def test_element_without_pool_returns_none(self):
+        navigator = _make_navigator({
+            "lane_element": [],
+            "lane": [],
+            "process_element": [],
+            "pool": [],
+        })
+
+        assert navigator.get_collaboration_of_element("003") is None
