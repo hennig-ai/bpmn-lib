@@ -50,6 +50,12 @@ class TableDefinition:
         # Wenn PK, zur PK-Collection hinzufügen
         if oColumn.is_primary_key():
             self._primary_key_columns.append(sColumnName)
+        elif oColumn.is_unique():
+            # Ein UNIQUE an der Spalte ist ein einspaltiger Unique-Constraint der
+            # Tabelle. Ohne diese Registrierung laeuft die Unique-Validierung ueber
+            # eine leere Liste und prueft nichts. PK-Spalten bleiben aussen vor,
+            # deren Eindeutigkeit deckt die Primary-Key-Validierung ab.
+            self._unique_constraints.append([sColumnName])
 
     def add_value_domain(self, sColumnName: str, oAllowedValues: List[str]) -> None:
         """Fügt eine Value Domain für eine Spalte hinzu."""

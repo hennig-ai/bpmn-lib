@@ -193,6 +193,13 @@ class DatabaseInstance:
         for o_constraint in o_unique_constraints:
             o_unique_columns = o_constraint
 
+            # ContainerUniqueIndexed kennt kein NULL: Uebersprungen werden nur Zeilen
+            # mit Leerstring, mehrere NULL-Zeilen wuerde es als doppelten Schluessel
+            # abweisen. Die Unique-Validierung laesst mehrfaches NULL dagegen zu, ein
+            # Index ueber eine nullable Spalte wuerde also gueltige Daten abbrechen.
+            if self._has_nullable_column(o_table_def, o_unique_columns):
+                continue
+
             # ContainerUniqueIndexed erstellen
             o_unique_index = ContainerUniqueIndexed()
             o_unique_index.init(o_container, o_unique_columns, True)
@@ -205,6 +212,20 @@ class DatabaseInstance:
 
         if n_unique_count > 0:
             log_msg(f"Unique-Indizes fuer Tabelle '{s_table_name}' erstellt ({n_unique_count} Indizes).")
+
+    def _has_nullable_column(self, o_table_def: TableDefinition, o_columns: List[str]) -> bool:
+        """Prueft ob eine der Spalten eines Unique-Constraints NULL zulaesst."""
+        for s_column in o_columns:
+            o_col_def = o_table_def.get_column(s_column)
+
+            if o_col_def is None:
+                log_and_raise(ValueError(f"Spalte '{s_column}' eines Unique-Constraints existiert nicht "
+                                         f"in Tabelle '{o_table_def.get_table_name()}'."))
+
+            if o_col_def.is_nullable():
+                return True
+
+        return False
 
     def set_read_only(self) -> None:
         """Setzt die Instanz auf Read-Only."""

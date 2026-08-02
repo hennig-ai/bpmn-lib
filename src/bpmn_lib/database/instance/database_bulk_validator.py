@@ -168,10 +168,9 @@ class DatabaseBulkValidator:
                 o_container = self._instance.get_table(s_table_name)
 
                 # Fuer jeden Unique Constraint
-                n_constraint_index = 1
-
                 for o_constraint in o_unique_constraints:
                     o_unique_columns = o_constraint
+                    s_columns = ", ".join(o_unique_columns)
 
                     # Temporaerer Index fuer Unique-Pruefung
                     o_unique_values = {}
@@ -180,23 +179,27 @@ class DatabaseBulkValidator:
                     o_iterator = o_container.create_iterator()
 
                     while not o_iterator.is_empty():
+                        # Zeilen mit NULL in einer Schluesselspalte bleiben aussen vor:
+                        # Ein Unique-Constraint vergleicht nur belegte Werte, mehrfaches
+                        # NULL ist erlaubt. Belegungspflicht regelt NOT NULL.
+                        if self._has_null_value(o_iterator, o_unique_columns):
+                            o_iterator.pp()
+                            continue
+
                         # Unique-Wert(e) zusammenbauen
                         s_unique_value = self._build_key_string(o_iterator, o_unique_columns)
 
-                        # Nur pruefen wenn nicht alle Werte NULL sind
-                        if s_unique_value != "":
-                            # Pruefen ob Wert bereits existiert
-                            if s_unique_value in o_unique_values:
-                                self._add_validation_error(f"Unique Constraint #{n_constraint_index} verletzt in Tabelle "
-                                                         f"'{s_table_name}': Doppelter Wert '{s_unique_value}' "
-                                                         f"in Zeile {o_iterator.position()}")
-                                b_success = False
-                            else:
-                                o_unique_values[s_unique_value] = o_iterator.position()
+                        # Pruefen ob Wert bereits existiert
+                        if s_unique_value in o_unique_values:
+                            self._add_validation_error(f"Unique Constraint verletzt in Tabelle '{s_table_name}', "
+                                                     f"Spalte(n) '{s_columns}': Doppelter Wert '{s_unique_value}' "
+                                                     f"in Zeile {o_iterator.position()}, bereits in Zeile "
+                                                     f"{o_unique_values[s_unique_value]}")
+                            b_success = False
+                        else:
+                            o_unique_values[s_unique_value] = o_iterator.position()
 
                         o_iterator.pp()
-
-                    n_constraint_index += 1
 
         return b_success
 
@@ -333,6 +336,14 @@ class DatabaseBulkValidator:
                 s_key += str(v_value)
 
         return s_key
+
+    def _has_null_value(self, o_iterator: AbstractIterator, o_columns: List[str]) -> bool:
+        """Prueft ob eine der Spalten in der aktuellen Zeile leer ist."""
+        for v_col in o_columns:
+            if is_effectively_null(o_iterator.value(str(v_col))):
+                return True
+
+        return False
 
     def _is_value_in_collection(self, s_value: str, o_collection: List[str]) -> bool:
         """Hilfsfunktion zum Pruefen ob Wert in Collection enthalten ist."""
