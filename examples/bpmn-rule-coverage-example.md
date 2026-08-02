@@ -37,6 +37,11 @@ Pool "Fulfilment Partner" (Prozess 002)
   Order Confirmed (message start, msg 4) --> Fulfil Order --> Done
 ```
 
+An `Prepare Order` haengen zusaetzlich zwei Artefakte des Prozesses 001: eine Text
+Annotation ueber eine Association und ein Data Object ueber eine Data Association. Sie
+tragen keinen Kontrollfluss, sondern die Container-Regeln fuer Association und Data
+Association.
+
 ## Was hier zusaetzlich abgedeckt ist
 
 | Regelgruppe | Traeger im Modell |
@@ -49,6 +54,8 @@ Pool "Fulfilment Partner" (Prozess 002)
 | MSG-010, MSG-020, MSG-030 | Order Confirmed `014` (message start) |
 | XOR-001 bis XOR-004 | Stock Decision `007` und Merge `010` |
 | BND-001 bis BND-006 | Cancellation Received `012` an Prepare Order `008` |
+| ASS-001, ASS-002 | Note to Prepare Order `039` (Text Annotation `038` an Prepare Order `008`) |
+| DAS-001, DAS-002 | Order Data to Prepare Order `041` (Data Object `040` an Prepare Order `008`) |
 | PRC-001, PRC-002, COL-001 | zwei Prozesse, eine Kollaboration |
 
 ## bpmn_model
@@ -107,6 +114,10 @@ Pool "Fulfilment Partner" (Prozess 002)
 | 035 | Quote Flow | Message flow carrying the quote | message_flow |
 | 036 | Cancellation Flow | Message flow carrying the cancellation | message_flow |
 | 037 | Confirmation Flow | Message flow carrying the order confirmation | message_flow |
+| 038 | Preparation Note | Annotation on how the order is assembled | text_annotation |
+| 039 | Note to Prepare Order | Connects the note with the preparation task | association |
+| 040 | Order Data | Order payload read while the order is prepared | data_object |
+| 041 | Order Data to Prepare Order | Data flow from the order data into the preparation | data_association |
 
 ## message_definition
 | message_definition_id | name | item_id |
@@ -150,6 +161,10 @@ Pool "Fulfilment Partner" (Prozess 002)
 | 029 | 002 | 016 |
 | 030 | 002 | 032 |
 | 031 | 002 | 033 |
+| 032 | 001 | 038 |
+| 033 | 001 | 039 |
+| 034 | 001 | 040 |
+| 035 | 001 | 041 |
 
 ## activity
 | activity_id | bpmn_element_id | activity_type | is_multi_instance | loop_type | is_ad_hoc | is_compensation | start_quantity | completion_quantity |
@@ -254,6 +269,7 @@ Pool "Fulfilment Partner" (Prozess 002)
 ## association
 | association_id | bpmn_element_id | source_bpmn_element_id | target_bpmn_element_id | association_direction |
 |----------------|-----------------|------------------------|------------------------|-----------------------|
+| 001 | 039 | 038 | 008 | none |
 
 ## pool
 | pool_id | bpmn_element_id | collaboration_id | bpmn_process_id | is_closed |
@@ -272,6 +288,7 @@ Pool "Fulfilment Partner" (Prozess 002)
 ## data_object
 | data_object_id | bpmn_element_id | is_collection | state |
 |----------------|-----------------|---------------|-------|
+| 001 | 040 | false | received |
 
 ## data_store
 | data_store_id | bpmn_element_id | capacity | is_unlimited |
@@ -280,6 +297,7 @@ Pool "Fulfilment Partner" (Prozess 002)
 ## text_annotation
 | text_annotation_id | bpmn_element_id | text |
 |-------------------|-----------------|------|
+| 001 | 038 | Preparation is done manually by the order desk |
 
 ## data_input
 | data_input_id | bpmn_element_id | name | is_collection |
@@ -292,3 +310,4 @@ Pool "Fulfilment Partner" (Prozess 002)
 ## data_association
 | data_association_id | bpmn_element_id | source_bpmn_element_id | target_bpmn_element_id | transformation_expression | assignment_expression |
 |--------------------|-----------------|------------------------|------------------------|---------------------------|----------------------|
+| 001 | 041 | 040 | 008 | ##!empty!## | ##!empty!## |
